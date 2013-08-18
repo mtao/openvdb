@@ -66,21 +66,21 @@
 #
 
 # The directory into which to install libraries, executables and header files
-INSTALL_DIR := /tmp/OpenVDB
+INSTALL_DIR := /usr/local
 
 # The parent directory of the boost/ header directory
-BOOST_INCL_DIR := $(HT)/include
+BOOST_INCL_DIR := /usr/include
 
 # The parent directory of the OpenEXR/ header directory (which contains half.h)
-HALF_INCL_DIR := $(HT)/include
+HALF_INCL_DIR := /usr/include
 # The directory containing libHalf
-HALF_LIB_DIR := $(HDSO)
+HALF_LIB_DIR := /usr/lib
 HALF_LIB := -lHalf
 
 # The parent directory of the tbb/ header directory
-TBB_INCL_DIR := $(HT)/include
+TBB_INCL_DIR := /usr/include
 # The directory containing libtbb
-TBB_LIB_DIR := $(HDSO)
+TBB_LIB_DIR := /usr/lib
 TBB_LIB := -ltbb
 
 # A scalable, concurrent malloc replacement library
@@ -89,20 +89,20 @@ TBB_LIB := -ltbb
 CONCURRENT_MALLOC_LIB := -ljemalloc
 #CONCURRENT_MALLOC_LIB := -ltbbmalloc_proxy -ltbbmalloc
 # The directory containing the malloc replacement library
-CONCURRENT_MALLOC_LIB_DIR := $(HDSO)
+CONCURRENT_MALLOC_LIB_DIR := /usr/lib
 
 # The parent directory of the cppunit/ header directory
 # (leave blank if CppUnit is unavailable)
-CPPUNIT_INCL_DIR := /rel/map/generic-2011.15/sys_include
+CPPUNIT_INCL_DIR := /usr/include
 # The directory containing libcppunit
-CPPUNIT_LIB_DIR := /rel/depot/third_party_build/cppunit/1.10.2-7/opt-ws5-x86_64-gccWS5_64/lib/
+CPPUNIT_LIB_DIR := /usr/lib
 CPPUNIT_LIB := -lcppunit
 
 # The directory containing glfw.h
 # (leave blank if GLFW is unavailable)
-GLFW_INCL_DIR := /rel/third_party/glfw/current/include
+GLFW_INCL_DIR := /usr/local/include
 # The directory containing libglfw
-GLFW_LIB_DIR := /rel/third_party/glfw/current/lib
+GLFW_LIB_DIR := /usr/local/lib
 GLFW_LIB := -lglfw
 
 # The Doxygen executable
