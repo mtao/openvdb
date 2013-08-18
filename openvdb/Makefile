@@ -193,6 +193,7 @@ INCLUDE_NAMES := \
     math/Proximity.h \
     math/QuantizedUnitVec.h \
     math/Quat.h \
+    math/Ray.h \
     math/Stats.h \
     math/Stencils.h \
     math/Transform.h\
@@ -216,6 +217,7 @@ INCLUDE_NAMES := \
     tools/LevelSetAdvect.h \
     tools/LevelSetFilter.h \
     tools/LevelSetFracture.h \
+    tools/LevelSetRayIntersector.h \
     tools/LevelSetRebuild.h \
     tools/LevelSetSphere.h \
     tools/LevelSetTracker.h \
@@ -302,10 +304,12 @@ UNITTEST_SRC_NAMES := \
     unittest/TestLeafBool.cc \
     unittest/TestLeafIO.cc \
     unittest/TestLeafOrigin.cc \
+    unittest/TestLevelSetRayIntersector.cc \
     unittest/TestLevelSetUtil.cc \
     unittest/TestLinearInterp.cc \
     unittest/TestMaps.cc \
     unittest/TestMat4Metadata.cc \
+    unittest/TestMath.cc \
     unittest/TestMeanCurvature.cc \
     unittest/TestMeshToVolume.cc \
     unittest/TestMetadata.cc \
@@ -319,6 +323,7 @@ UNITTEST_SRC_NAMES := \
     unittest/TestQuadraticInterp.cc \
     unittest/TestQuantizedUnitVec.cc \
     unittest/TestQuat.cc \
+    unittest/TestRay.cc \
     unittest/TestStats.cc \
     unittest/TestStream.cc \
     unittest/TestStringMetadata.cc \
@@ -399,7 +404,7 @@ LIB_MINOR_VERSION=$(shell grep 'OPENVDB_LIBRARY_MINOR_VERSION = ' \
 LIB_PATCH_VERSION=$(shell grep 'OPENVDB_LIBRARY_PATCH_VERSION = ' \
     version.h | sed 's/[^0-9]*//g')
 
-LIB_VERSION=$(LIB_MINOR_VERSION).$(LIB_PATCH_VERSION)
+LIB_VERSION=$(LIB_MAJOR_VERSION).$(LIB_MINOR_VERSION).$(LIB_PATCH_VERSION)
 
 LIBOPENVDB_NAME=libopenvdb
 LIBOPENVDB_STATIC := $(LIBOPENVDB_NAME).a

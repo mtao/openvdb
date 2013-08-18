@@ -88,13 +88,15 @@ public:
     /// Add the samples from the other Stats instance.
     void add(const Stats& other)
     {
-        mMin  = std::min<double>(mMin, other.mMin);
-        mMax  = std::max<double>(mMax, other.mMax);
-        const double denom = 1.0/double(mSize + other.mSize);
-        const double delta = other.mAvg - mAvg;
-        mAvg += denom*delta*other.mSize;
-        mAux += other.mAux + denom*delta*delta*mSize*other.mSize;
-        mSize += other.mSize;
+        if (other.mSize > 0) {
+            mMin  = std::min<double>(mMin, other.mMin);
+            mMax  = std::max<double>(mMax, other.mMax);
+            const double denom = 1.0/double(mSize + other.mSize);
+            const double delta = other.mAvg - mAvg;
+            mAvg += denom*delta*other.mSize;
+            mAux += other.mAux + denom*delta*delta*mSize*other.mSize;
+            mSize += other.mSize;
+        }
     }
 
     /// Return the size of the population, i.e., the total number of samples.
@@ -121,12 +123,16 @@ public:
         os << std::setprecision(precision) << std::setiosflags(std::ios::fixed);
         os << "Statistics ";
         if (!name.empty()) os << "for \"" << name << "\" ";
-        os << "with " << mSize << " samples:\n"
-           << "  Min=" << mMin
-           << ", Max=" << mMax
-           << ", Ave=" << mAvg
-           << ", Std=" << this->stdDev()
-           << ", Var=" << this->variance() << std::endl;
+        if (mSize>0) {
+            os << "with " << mSize << " samples:\n"
+               << "  Min=" << mMin
+               << ", Max=" << mMax
+               << ", Ave=" << mAvg
+               << ", Std=" << this->stdDev()
+               << ", Var=" << this->variance() << std::endl;
+        } else {
+            os << ": no samples were added." << std::endl;
+        }
         strm << os.str();
     }
 
@@ -211,16 +217,20 @@ public:
         os << std::setprecision(6) << std::setiosflags(std::ios::fixed) << std::endl;
         os << "Histogram ";
         if (!name.empty()) os << "for \"" << name << "\" ";
-        os << "with " << mSize << " samples:\n";
-        os << "==============================================================\n";
-        os << "||  #   |       Min      |       Max      | Frequency |  %  ||\n";
-        os << "==============================================================\n";
-        for (size_t i=0, e=mBins.size(); i!=e; ++i) {
-            os << "|| " << std::setw(4) << i   << " | " << std::setw(14) << this->min(i) << " | "
-               << std::setw(14) << this->max(i) << " | " << std::setw(9) << mBins[i]     << " | "
-               << std::setw(3) << (100*mBins[i]/mSize) << " ||\n";
+        if (mSize > 0) {
+            os << "with " << mSize << " samples:\n";
+            os << "==============================================================\n";
+            os << "||  #   |       Min      |       Max      | Frequency |  %  ||\n";
+            os << "==============================================================\n";
+            for (size_t i=0, e=mBins.size(); i!=e; ++i) {
+                os << "|| " << std::setw(4) << i   << " | " << std::setw(14) << this->min(i) << " | "
+                   << std::setw(14) << this->max(i) << " | " << std::setw(9) << mBins[i]     << " | "
+                   << std::setw(3) << (100*mBins[i]/mSize) << " ||\n";
+            }
+            os << "==============================================================\n";
+        } else {
+            os << ": no samples were added." << std::endl;
         }
-        os << "==============================================================\n";
         strm << os.str();
     }
 

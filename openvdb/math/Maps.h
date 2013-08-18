@@ -184,9 +184,9 @@ public:
     virtual Vec3d applyInverseMap(const Vec3d& in) const = 0;
 
     virtual Vec3d applyIJT(const Vec3d& in) const = 0;
-    virtual Vec3d applyIJT(const Vec3d& in, const Vec3d& pos) const = 0;
+    virtual Vec3d applyIJT(const Vec3d& in, const Vec3d& domainPos) const = 0;
     virtual Mat3d applyIJC(const Mat3d& m) const = 0;
-    virtual Mat3d applyIJC(const Mat3d& m, const Vec3d& v, const Vec3d& pos) const = 0;
+    virtual Mat3d applyIJC(const Mat3d& m, const Vec3d& v, const Vec3d& domainPos) const = 0;
 
 
     virtual double determinant() const = 0;
@@ -195,6 +195,8 @@ public:
 
     //@{
     /// @brief Method to return the local size of a voxel.
+    /// When a location is specified as an argument, it is understood to be
+    /// be in the domain of the map (i.e. index space)
     virtual Vec3d voxelSize() const = 0;
     virtual Vec3d voxelSize(const Vec3d&) const = 0;
     //@}
@@ -217,6 +219,35 @@ public:
     virtual MapBase::Ptr postTranslate(const Vec3d&) const = 0;
     virtual MapBase::Ptr postScale(const Vec3d&) const = 0;
     virtual MapBase::Ptr postShear(double shear, Axis axis0, Axis axis1) const = 0;
+    //@}
+
+    //@{
+    /// @brief Apply the Jacobian of this map to a vector.
+    /// @warning Houdini 12.5 uses an earlier version of OpenVDB, and maps created
+    /// with that version lack a virtual table entry for this method.  Do not call
+    /// this method from Houdini 12.5.
+    virtual Vec3d applyJacobian(const Vec3d& in) const = 0;
+    virtual Vec3d applyJacobian(const Vec3d& in, const Vec3d& domainPos) const = 0;
+    //@}
+
+    //@{
+    /// @brief Apply the Jacobian transpose of this map to a vector.  This will take
+    /// a range-space vector to a domain-space vector (e.g., world to index).
+    /// @warning Houdini 12.5 uses an earlier version of OpenVDB, and maps created
+    /// with that version lack a virtual table entry for this method.  Do not call
+    /// this method from Houdini 12.5.
+    virtual Vec3d applyJT(const Vec3d& in) const = 0;
+    virtual Vec3d applyJT(const Vec3d& in, const Vec3d& domainPos) const = 0;
+    //@}
+
+    //@{
+    /// @brief Returns a MapBasePtr to the derived map. If the map is a Frustum
+    /// this will throw as we have not implimented an explicit map type to serve 
+    /// as the inverse of a Frustum. 
+    /// @warning Houdini 12.5 uses an earlier version of OpenVDB, and maps created
+    /// with that version lack a virtual table entry for this method.  Do not call
+    /// this method from Houdini 12.5.
+    virtual MapBase::Ptr inverseMap() const = 0;
     //@}
 
 protected:
@@ -334,6 +365,8 @@ public:
     /// Return a MapBase::Ptr to a deep copy of this map
     MapBase::Ptr copy() const { return MapBase::Ptr(new AffineMap(*this)); }
 
+    MapBase::Ptr inverseMap() const { return MapBase::Ptr(new AffineMap(mMatrixInv)); }
+
     static bool isRegistered() { return MapRegistry::isRegistered(AffineMap::mapType()); }
 
     static void registerMap()
@@ -399,6 +432,14 @@ public:
         return Vec3d( m[ 0] * in[0] + m[ 4] * in[1] + m[ 8] * in[2],
                       m[ 1] * in[0] + m[ 5] * in[1] + m[ 9] * in[2],
                       m[ 2] * in[0] + m[ 6] * in[1] + m[10] * in[2] );
+    }
+
+    /// Return the Jacobian Transpose of the map applied to @a in.
+    /// This tranforms range-space gradients to domain-space gradients
+    Vec3d applyJT(const Vec3d& in, const Vec3d&) const { return applyJT(in); }
+    /// Return the Jacobian Transpose of the map applied to @a in.
+    Vec3d applyJT(const Vec3d& in) const {
+        return mMatrix * in;
     }
 
     /// Return the transpose of the inverse Jacobian of the map applied to @a in.
@@ -627,6 +668,7 @@ public:
     typedef boost::shared_ptr<const ScaleMap> ConstPtr;
 
     ScaleMap(): MapBase(), mScaleValues(Vec3d(1,1,1)), mVoxelSize(Vec3d(1,1,1)),
+                mScaleValuesInverse(Vec3d(1,1,1)),
                 mInvScaleSqr(1,1,1), mInvTwiceScale(0.5,0.5,0.5){}
 
     ScaleMap(const Vec3d& scale):
@@ -659,6 +701,8 @@ public:
     static MapBase::Ptr create() { return MapBase::Ptr(new ScaleMap()); }
     /// Return a MapBase::Ptr to a deep copy of this map
     MapBase::Ptr copy() const { return MapBase::Ptr(new ScaleMap(*this)); }
+
+    MapBase::Ptr inverseMap() const { return MapBase::Ptr(new ScaleMap(mScaleValuesInverse)); }
 
     static bool isRegistered() { return MapRegistry::isRegistered(ScaleMap::mapType()); }
 
@@ -705,6 +749,13 @@ public:
     Vec3d applyJacobian(const Vec3d& in, const Vec3d&) const { return applyJacobian(in); }
     /// Return the Jacobian of the map applied to @a in.
     Vec3d applyJacobian(const Vec3d& in) const { return applyMap(in); }
+
+    /// Return the Jacobian Transpose of the map applied to @a in.
+    /// This tranforms range-space gradients to domain-space gradients
+    Vec3d applyJT(const Vec3d& in, const Vec3d&) const { return applyJT(in); }
+    /// Return the Jacobian Transpose of the map applied to @a in.
+    Vec3d applyJT(const Vec3d& in) const { return applyMap(in); }
+
 
 
     /// @brief Return the transpose of the inverse Jacobian of the map applied to @a in.
@@ -862,6 +913,10 @@ public:
     static MapBase::Ptr create() { return MapBase::Ptr(new UniformScaleMap()); }
     /// Return a MapBase::Ptr to a deep copy of this map
     MapBase::Ptr copy() const { return MapBase::Ptr(new UniformScaleMap(*this)); }
+    
+    MapBase::Ptr inverseMap() const { 
+        const Vec3d& invScale = getInvScale();
+        return MapBase::Ptr(new UniformScaleMap( invScale[0])); }
 
     static bool isRegistered() { return MapRegistry::isRegistered(UniformScaleMap::mapType()); }
     static void registerMap()
@@ -931,6 +986,8 @@ public:
     /// Return a MapBase::Ptr to a deep copy of this map
     MapBase::Ptr copy() const { return MapBase::Ptr(new TranslationMap(*this)); }
 
+    MapBase::Ptr inverseMap() const { return MapBase::Ptr(new TranslationMap(-mTranslation)); }
+
     static bool isRegistered() { return MapRegistry::isRegistered(TranslationMap::mapType()); }
 
     static void registerMap()
@@ -957,6 +1014,12 @@ public:
     Vec3d applyJacobian(const Vec3d& in, const Vec3d&) const { return applyJacobian(in); }
     /// Return the Jacobian of the map applied to @a in.
     Vec3d applyJacobian(const Vec3d& in) const { return in; }
+
+    /// Return the Jacobian Transpose of the map applied to @a in.
+    /// This tranforms range-space gradients to domain-space gradients
+    Vec3d applyJT(const Vec3d& in, const Vec3d&) const { return applyJT(in); }
+    /// Return the Jacobian Transpose of the map applied to @a in.
+    Vec3d applyJT(const Vec3d& in) const { return in; }
 
     /// @brief Return the transpose of the inverse Jacobian (Identity for TranslationMap)
     /// of the map applied to @c in, ignores second argument
@@ -1136,6 +1199,8 @@ public:
     /// Return a MapBase::Ptr to a deep copy of this map
     MapBase::Ptr copy() const { return MapBase::Ptr(new ScaleTranslateMap(*this)); }
 
+    MapBase::Ptr inverseMap() const { return MapBase::Ptr(new ScaleTranslateMap(mScaleValuesInverse, -mScaleValuesInverse * mTranslation)); }
+
     static bool isRegistered() { return MapRegistry::isRegistered(ScaleTranslateMap::mapType()); }
 
     static void registerMap()
@@ -1183,6 +1248,12 @@ public:
     Vec3d applyJacobian(const Vec3d& in, const Vec3d&) const { return applyJacobian(in); }
     /// Return the Jacobian of the map applied to @a in.
     Vec3d applyJacobian(const Vec3d& in) const { return in * mScaleValues; }
+
+    /// Return the Jacobian Transpose of the map applied to @a in.
+    /// This tranforms range-space gradients to domain-space gradients
+    Vec3d applyJT(const Vec3d& in, const Vec3d&) const { return applyJT(in); }
+    /// Return the Jacobian Transpose of the map applied to @a in.
+    Vec3d applyJT(const Vec3d& in) const { return applyJacobian(in); }
 
     /// @brief Return the transpose of the inverse Jacobian of the map applied to @a in
     /// @details Ignores second argument
@@ -1380,6 +1451,11 @@ public:
     /// Return a MapBase::Ptr to a deep copy of this map
     MapBase::Ptr copy() const { return MapBase::Ptr(new UniformScaleTranslateMap(*this)); }
 
+    MapBase::Ptr inverseMap() const { 
+        const Vec3d& scaleInv = getInvScale();
+        const Vec3d& trans = getTranslation();
+        return MapBase::Ptr(new UniformScaleTranslateMap(scaleInv[0], -scaleInv[0] * trans)); }
+
     static bool isRegistered()
     {
         return MapRegistry::isRegistered(UniformScaleTranslateMap::mapType());
@@ -1388,8 +1464,8 @@ public:
     static void registerMap()
     {
         MapRegistry::registerMap(
-            UniformScaleTranslateMap::mapType(),
-            UniformScaleTranslateMap::create);
+                                 UniformScaleTranslateMap::mapType(),
+                                 UniformScaleTranslateMap::create);
     }
 
     Name type() const { return mapType(); }
@@ -1498,76 +1574,76 @@ ScaleTranslateMap::postScale(const Vec3d& v) const
 /// i.e. rotation  and or reflection.
 class OPENVDB_API UnitaryMap: public MapBase
 {
-public:
+ public:
     typedef boost::shared_ptr<UnitaryMap>       Ptr;
     typedef boost::shared_ptr<const UnitaryMap> ConstPtr;
 
     /// default constructor makes an Idenity.
     UnitaryMap(): mAffineMap(Mat4d::identity())
-    {
-    }
+        {
+        }
 
     UnitaryMap(const Vec3d& axis, double radians)
-    {
-        Mat3d matrix;
-        matrix.setToRotation(axis, radians);
-        mAffineMap = AffineMap(matrix);
-    }
+        {
+            Mat3d matrix;
+            matrix.setToRotation(axis, radians);
+            mAffineMap = AffineMap(matrix);
+        }
 
     UnitaryMap(Axis axis, double radians)
-    {
-        Mat4d matrix;
-        matrix.setToRotation(axis, radians);
-        mAffineMap = AffineMap(matrix);
-    }
+        {
+            Mat4d matrix;
+            matrix.setToRotation(axis, radians);
+            mAffineMap = AffineMap(matrix);
+        }
 
     UnitaryMap(const Mat3d& m)
-    {
-        // test that the mat3 is a rotation || reflection
-        if (!isUnitary(m)) {
-            OPENVDB_THROW(ArithmeticError, "Matrix initializing unitary map was not unitary");
-        }
+        {
+            // test that the mat3 is a rotation || reflection
+            if (!isUnitary(m)) {
+                OPENVDB_THROW(ArithmeticError, "Matrix initializing unitary map was not unitary");
+            }
 
-        Mat4d matrix(Mat4d::identity());
-        matrix.setMat3(m);
-        mAffineMap = AffineMap(matrix);
-    }
+            Mat4d matrix(Mat4d::identity());
+            matrix.setMat3(m);
+            mAffineMap = AffineMap(matrix);
+        }
 
     UnitaryMap(const Mat4d& m)
-    {
-        if (!isInvertible(m)) {
-            OPENVDB_THROW(ArithmeticError,
-                "4x4 Matrix initializing unitary map was not unitary: not invertible");
-        }
+        {
+            if (!isInvertible(m)) {
+                OPENVDB_THROW(ArithmeticError,
+                              "4x4 Matrix initializing unitary map was not unitary: not invertible");
+            }
 
-        if (!isAffine(m)) {
-            OPENVDB_THROW(ArithmeticError,
-                "4x4 Matrix initializing unitary map was not unitary: not affine");
-        }
+            if (!isAffine(m)) {
+                OPENVDB_THROW(ArithmeticError,
+                              "4x4 Matrix initializing unitary map was not unitary: not affine");
+            }
 
-        if (hasTranslation(m)) {
-            OPENVDB_THROW(ArithmeticError,
-                "4x4 Matrix initializing unitary map was not unitary: had translation");
-        }
+            if (hasTranslation(m)) {
+                OPENVDB_THROW(ArithmeticError,
+                              "4x4 Matrix initializing unitary map was not unitary: had translation");
+            }
 
-        if (!isUnitary(m.getMat3())) {
-            OPENVDB_THROW(ArithmeticError,
-                "4x4 Matrix initializing unitary map was not unitary");
-        }
+            if (!isUnitary(m.getMat3())) {
+                OPENVDB_THROW(ArithmeticError,
+                              "4x4 Matrix initializing unitary map was not unitary");
+            }
 
-        mAffineMap = AffineMap(m);
-    }
+            mAffineMap = AffineMap(m);
+        }
 
     UnitaryMap(const UnitaryMap& other):
         MapBase(other),
         mAffineMap(other.mAffineMap)
-    {
-    }
+            {
+            }
 
     UnitaryMap(const UnitaryMap& first, const UnitaryMap& second):
         mAffineMap(*(first.getAffineMap()), *(second.getAffineMap()))
-    {
-    }
+        {
+        }
 
     ~UnitaryMap() {}
     /// Return a MapBase::Ptr to a new UnitaryMap
@@ -1575,6 +1651,8 @@ public:
     /// Returns a MapBase::Ptr to a deep copy of *this
     MapBase::Ptr copy() const { return MapBase::Ptr(new UnitaryMap(*this)); }
 
+    MapBase::Ptr inverseMap() const { return MapBase::Ptr(new UnitaryMap(mAffineMap.getMat4().inverse())); }
+  
     static bool isRegistered() { return MapRegistry::isRegistered(UnitaryMap::mapType()); }
 
     static void registerMap()
@@ -1613,6 +1691,16 @@ public:
     Vec3d applyJacobian(const Vec3d& in, const Vec3d&) const { return applyJacobian(in); }
     /// Return the Jacobian of the map applied to @a in.
     Vec3d applyJacobian(const Vec3d& in) const { return applyMap(in); }
+
+    /// Return the Jacobian Transpose of the map applied to @a in.
+    /// This tranforms range-space gradients to domain-space gradients
+    Vec3d applyJT(const Vec3d& in, const Vec3d&) const { return applyJT(in); }
+    /// Return the Jacobian Transpose of the map applied to @a in.
+    Vec3d applyJT(const Vec3d& in) const {
+        // The transpose of the unitary map is its inverse
+        return applyInverseMap(in);
+    }
+
 
     /// @brief Return the transpose of the inverse Jacobian of the map applied to @a in
     /// @details Ignores second argument
@@ -1860,6 +1948,8 @@ public:
     /// Return a MapBase::Ptr to a deep copy of this map
     MapBase::Ptr copy() const { return MapBase::Ptr(new NonlinearFrustumMap(*this)); }
 
+    MapBase::Ptr inverseMap() const { OPENVDB_THROW(ArithmeticError, "OpenVDB does not have an inverse Maps"
+                                                    " defined for the NonlinearFrustum");  }
     static bool isRegistered() { return MapRegistry::isRegistered(NonlinearFrustumMap::mapType()); }
 
     static void registerMap()
@@ -1959,6 +2049,36 @@ public:
                         mDepthOnLz * in.z());
 
         return mSecondMap.applyJacobian(tmp);
+    }
+
+
+    /// Return the Jacobian Transpose of the map applied to vector @c in at @c indexloc.
+    /// This tranforms range-space gradients to domain-space gradients.
+    ///
+    Vec3d applyJT(const Vec3d& in, const Vec3d& isloc) const {
+        const Vec3d tmp = mSecondMap.applyJT(in);
+        // Move the center of the x-face of the bbox
+        // to the origin in index space.
+        Vec3d centered(isloc);
+        centered = centered - mBBox.min();
+        centered.x() -= mXo;
+        centered.y() -= mYo;
+
+        // scale the z-direction on depth / K count
+        const double zprime = centered.z()*mDepthOnLz;
+
+        const double scale = (mGamma * zprime + 1.) / mLx;
+        const double scale2 = mGamma * mDepthOnLz / mLx;
+
+        return Vec3d(scale * tmp.x(),
+                     scale * tmp.y(),
+                     scale2 * centered.x()* tmp.x() +
+                     scale2 * centered.y()* tmp.y() +
+                     mDepthOnLz * tmp.z());
+    }
+    /// Return the Jacobian Transpose of the second map applied to @c in.
+    Vec3d applyJT(const Vec3d& in) const {
+        return mSecondMap.applyJT(in);
     }
 
     /// Return the transpose of the inverse Jacobian of the linear second map applied to @c in

@@ -40,6 +40,7 @@ public:
     CPPUNIT_TEST_SUITE(TestMaps);
     CPPUNIT_TEST(testTranslation);
     CPPUNIT_TEST(testRotation);
+    CPPUNIT_TEST(testScaleDefault);
     CPPUNIT_TEST(testScaleTranslate);
     CPPUNIT_TEST(testUniformScaleTranslate);
     CPPUNIT_TEST(testDecomposition);
@@ -51,6 +52,7 @@ public:
 
     void testTranslation();
     void testRotation();
+    void testScaleDefault();
     void testScaleTranslate();
     void testUniformScaleTranslate();
     void testDecomposition();
@@ -176,8 +178,53 @@ TestMaps::testTranslation()
     CPPUNIT_ASSERT_DOUBLES_EQUAL(result(0), 1, TOL);
     CPPUNIT_ASSERT_DOUBLES_EQUAL(result(1), 0, TOL);
     CPPUNIT_ASSERT_DOUBLES_EQUAL(result(2), 0, TOL);
+
+    MapBase::Ptr inverse = translation->inverseMap();
+    CPPUNIT_ASSERT(inverse->type() == TranslationMap::mapType());
+    // apply the map forward and the inverse map back
+    result = inverse->applyMap(translation->applyMap(unit));
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(result(0), 1, TOL);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(result(1), 0, TOL);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(result(2), 0, TOL);
+
+  
 }
 
+void
+TestMaps::testScaleDefault()
+{
+    using namespace openvdb::math;
+
+    double TOL = 1e-7;
+
+    // testing default constructor
+    // should be the identity
+    ScaleMap::Ptr  scale(new ScaleMap());
+    Vec3d unit(1, 1, 1);
+    
+    Vec3d result = scale->applyMap(unit);
+    
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(unit(0), result(0), TOL);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(unit(1), result(1), TOL);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(unit(2), result(2), TOL);
+    
+    result = scale->applyInverseMap(unit);
+
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(unit(0), result(0), TOL);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(unit(1), result(1), TOL);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(unit(2), result(2), TOL);
+
+    
+    MapBase::Ptr inverse = scale->inverseMap();
+    CPPUNIT_ASSERT(inverse->type() == ScaleMap::mapType());
+    // apply the map forward and the inverse map back
+    result = inverse->applyMap(scale->applyMap(unit));
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(result(0), unit(0), TOL);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(result(1), unit(1), TOL);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(result(2), unit(2), TOL);
+
+    
+}
 
 void
 TestMaps::testRotation()
@@ -220,6 +267,15 @@ TestMaps::testRotation()
     CPPUNIT_ASSERT_DOUBLES_EQUAL(0, result(0), TOL);
     CPPUNIT_ASSERT_DOUBLES_EQUAL(sqrt(2.)/2, result(1), TOL);
     CPPUNIT_ASSERT_DOUBLES_EQUAL(sqrt(2.)/2, result(2), TOL);
+
+    // Test inverse map
+    MapBase::Ptr inverse = rotation->inverseMap();
+    CPPUNIT_ASSERT(inverse->type() == UnitaryMap::mapType());
+    // apply the map forward and the inverse map back
+    result = inverse->applyMap(rotation->applyMap(unit));
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(result(0), unit(0), TOL);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(result(1), unit(1), TOL);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(result(2), unit(2), TOL);
 }
 
 
@@ -266,6 +322,15 @@ TestMaps::testScaleTranslate()
     CPPUNIT_ASSERT_DOUBLES_EQUAL(1, result(1), TOL);
     CPPUNIT_ASSERT_DOUBLES_EQUAL(0, result(2), TOL);
 
+    // Test inverse map
+    MapBase::Ptr inverse = scaleAndTranslate->inverseMap();
+    CPPUNIT_ASSERT(inverse->type() == ScaleTranslateMap::mapType());
+    // apply the map forward and the inverse map back
+    result = inverse->applyMap(scaleAndTranslate->applyMap(unit));
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(result(0), unit(0), TOL);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(result(1), unit(1), TOL);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(result(2), unit(2), TOL);
+
 }
 
 
@@ -311,6 +376,17 @@ TestMaps::testUniformScaleTranslate()
     CPPUNIT_ASSERT_DOUBLES_EQUAL(0, result(0), TOL);
     CPPUNIT_ASSERT_DOUBLES_EQUAL(1, result(1), TOL);
     CPPUNIT_ASSERT_DOUBLES_EQUAL(0, result(2), TOL);
+
+
+    // Test inverse map
+    MapBase::Ptr inverse = scaleAndTranslate->inverseMap();
+    CPPUNIT_ASSERT(inverse->type() == UniformScaleTranslateMap::mapType());
+    // apply the map forward and the inverse map back
+    result = inverse->applyMap(scaleAndTranslate->applyMap(unit));
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(result(0), unit(0), TOL);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(result(1), unit(1), TOL);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(result(2), unit(2), TOL);
+
 }
 
 
