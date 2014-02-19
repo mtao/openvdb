@@ -43,6 +43,7 @@
 #include <limits>    // for std::numeric_limits<Type>::max()
 #include <string>
 #include <boost/numeric/conversion/conversion_traits.hpp>
+#include <boost/math/special_functions/cbrt.hpp>
 #include <boost/random/mersenne_twister.hpp> // for boost::random::mt19937
 #include <boost/random/uniform_01.hpp>
 #include <boost/random/uniform_int.hpp>
@@ -78,7 +79,7 @@ OPENVDB_USE_VERSION_NAMESPACE
 namespace OPENVDB_VERSION_NAME {
 
 /// @brief Return the value of type T that corresponds to zero.
-/// @note A @c zeroVal<T>() specialization must be defined for each @c ValueType T
+/// @note A zeroVal<T>() specialization must be defined for each @c ValueType T
 /// that cannot be constructed using the form @c T(0).  For example, @c std::string(0)
 /// treats 0 as @c NULL and throws a @c std::logic_error.
 template<typename T> inline T zeroVal() { return T(0); }
@@ -86,17 +87,6 @@ template<typename T> inline T zeroVal() { return T(0); }
 template<> inline std::string zeroVal<std::string>() { return ""; }
 /// Return the @c bool value that corresponds to zero.
 template<> inline bool zeroVal<bool>() { return false; }
-
-
-//@{
-/// Floating-point comparison tolerance
-template<typename T> inline T toleranceValue() { return T(1e-8); }
-template<> inline float toleranceValue<float>() { return float(1e-6); }
-template<typename T> struct tolerance { static T value() { return 0; } };
-template<> struct tolerance<float>    { static float value() { return 1e-8f; } };
-template<> struct tolerance<double>   { static double value() { return 1e-15; } };
-//@}
-
 
 /// @todo These won't be needed if we eliminate StringGrids.
 //@{
@@ -109,18 +99,32 @@ inline std::string operator+(const std::string& s, double) { return s; }
 //@}
 
 
-//@{
+namespace math {
+
 /// @brief Return the unary negation of the given value.
 /// @note A negative<T>() specialization must be defined for each ValueType T
 /// for which unary negation is not defined.
 template<typename T> inline T negative(const T& val) { return T(-val); }
+/// Return the negation of the given boolean.
 template<> inline bool negative(const bool& val) { return !val; }
-//@}
 /// Return the "negation" of the given string.
 template<> inline std::string negative(const std::string& val) { return val; }
 
 
-namespace math {
+//@{
+/// Tolerance for floating-point comparison
+template<typename T> struct Tolerance { static T value() { return zeroVal<T>(); } };
+template<> struct Tolerance<float>    { static float value() { return 1e-8f; } };
+template<> struct Tolerance<double>   { static double value() { return 1e-15; } };
+//@}
+
+//@{
+/// Delta for small floating-point offsets
+template<typename T> struct Delta { static T value() { return zeroVal<T>(); } };
+template<> struct Delta<float>    { static float value() { return  1e-5f; } };
+template<> struct Delta<double>   { static double value() { return 1e-9; } };
+//@}
+
 
 // ==========> Random Values <==================
 
@@ -290,7 +294,7 @@ template<typename Type>
 inline bool
 isApproxZero(const Type& x)
 {
-    const Type tolerance = Type(zeroVal<Type>() + toleranceValue<Type>());
+    const Type tolerance = Type(zeroVal<Type>() + Tolerance<Type>::value());
     return x < tolerance && x > -tolerance;
 }
 
@@ -303,36 +307,32 @@ isApproxZero(const Type& x, const Type& tolerance)
 }
 
 
+/// Return @c true if @a x is less than zero.
 template<typename Type>
 inline bool
 isNegative(const Type& x) { return x < zeroVal<Type>(); }
 
-/// Dummy implementation for bool type
-template<>
-inline bool isNegative<bool>(const bool&) { return false; }
+/// Return @c false, since @c bool values are never less than zero.
+template<> inline bool isNegative<bool>(const bool&) { return false; }
 
 
+/// @brief Return @c true if @a a is equal to @a b to within
+/// the default floating-point comparison tolerance.
 template<typename Type>
 inline bool
 isApproxEqual(const Type& a, const Type& b)
 {
-    const Type tolerance = Type(zeroVal<Type>() + toleranceValue<Type>());
+    const Type tolerance = Type(zeroVal<Type>() + Tolerance<Type>::value());
     return !(Abs(a - b) > tolerance);
 }
 
+
+/// Return @c true if @a a is equal to @a b to within the given tolerance.
 template<typename Type>
 inline bool
 isApproxEqual(const Type& a, const Type& b, const Type& tolerance)
 {
     return !(Abs(a - b) > tolerance);
-}
-
-/// @brief Return true if a is approximatly larger then b, i.e. b - a < tolerance
-template<typename Type>
-inline bool
-isApproxLarger(const Type& a, const Type& b, const Type& tolerance)
-{
-    return (b - a < tolerance);
 }
 
 #define OPENVDB_EXACT_IS_APPROX_EQUAL(T) \
@@ -344,6 +344,17 @@ OPENVDB_EXACT_IS_APPROX_EQUAL(bool)
 OPENVDB_EXACT_IS_APPROX_EQUAL(std::string)
 
 
+/// @brief Return @c true if @a a is larger than @a b to within
+/// the given tolerance, i.e., if @a b - @a a < @a tolerance.
+template<typename Type>
+inline bool
+isApproxLarger(const Type& a, const Type& b, const Type& tolerance)
+{
+    return (b - a < tolerance);
+}
+
+
+/// @brief Return @c true if @a a is exactly equal to @a b.
 template<typename T0, typename T1>
 inline bool
 isExactlyEqual(const T0& a, const T1& b)
@@ -612,7 +623,12 @@ Min(const Type& a, const Type& b, const Type& c, const Type& d,
 
 
 ////////////////////////////////////////
+// ============> Exp <==================
 
+template<typename Type>
+inline Type Exp(const Type& x) { return std::exp(x); }
+    
+////////////////////////////////////////
 
 /// Return the sign of the given value as an integer (either -1, 0 or 1).
 template <typename Type>
@@ -649,9 +665,9 @@ inline long double Sqrt(long double x) { return sqrtl(x); }
 
 //@{
 /// Return the cube root of a floating-point value.
-inline float Cbrt(float x) { return cbrtf(x); }
-inline double Cbrt(double x) { return cbrtf(x); }
-inline long double Cbrt(long double x) { return cbrtl(x); }
+inline float Cbrt(float x) { return boost::math::cbrt(x); }
+inline double Cbrt(double x) { return boost::math::cbrt(x); }
+inline long double Cbrt(long double x) { return boost::math::cbrt(x); }
 //@}
 
 
@@ -784,8 +800,8 @@ struct promote {
 /// @note This methods assumes operator[] exists and avoids branching.
 /// @details If two components of the input vector are equal and smaller then the
 /// third component, the largest index of the two is always returned.
-/// If all three vector components are equal the largest index, i.e. 2, is 
-/// returned. In other words the return value corresponds to the largest index 
+/// If all three vector components are equal the largest index, i.e. 2, is
+/// returned. In other words the return value corresponds to the largest index
 /// of the of the smallest vector components.
 template<typename Vec3T>
 size_t
@@ -802,8 +818,8 @@ MinIndex(const Vec3T& v)
 /// @note This methods assumes operator[] exists and avoids branching.
 /// @details If two components of the input vector are equal and larger then the
 /// third component, the largest index of the two is always returned.
-/// If all three vector components are equal the largest index, i.e. 2, is 
-/// returned. In other words the return value corresponds to the largest index 
+/// If all three vector components are equal the largest index, i.e. 2, is
+/// returned. In other words the return value corresponds to the largest index
 /// of the of the largest vector components.
 template<typename Vec3T>
 size_t

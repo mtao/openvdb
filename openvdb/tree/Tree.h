@@ -72,12 +72,12 @@ public:
 
     /// Return the name of this tree's type.
     virtual const Name& type() const = 0;
+
     /// Return the name of the type of a voxel's value (e.g., "float" or "vec3d").
     virtual Name valueType() const = 0;
 
     /// Return a pointer to a deep copy of this tree
     virtual TreeBase::Ptr copy() const = 0;
-
 
     //
     // Tree methods
@@ -86,10 +86,15 @@ public:
     /// @note Query the metadata object for the value's type.
     virtual Metadata::Ptr getBackgroundValue() const { return Metadata::Ptr(); }
 
-    /// @brief Return in @a bbox the axis-aligned bounding box of all leaf nodes.
+    /// @brief Return in @a bbox the axis-aligned bounding box of all
+    /// leaf nodes and active tiles.
+    /// @details This is faster then calling evalActiveVoxelBoundingBox,
+    /// which visits the individual active voxels, and hence
+    /// evalLeafBoundingBox produces a less tight, i.e. approximate, bbox.
     /// @return @c false if the bounding box is empty (in which case
     /// the bbox is set to its default value).
     virtual bool evalLeafBoundingBox(CoordBBox& bbox) const = 0;
+
     /// @brief Return in @a dim the dimensions of the axis-aligned bounding box
     /// of all leaf nodes.
     /// @return @c false if the bounding box is empty.
@@ -97,10 +102,13 @@ public:
 
     /// @brief Return in @a bbox the axis-aligned bounding box of all
     /// active voxels and tiles.
-    /// This is a tighter bounding box than the leaf node bounding box.
+    /// @details This method produces a more accurate, i.e. tighter,
+    /// bounding box than evalLeafBoundingBox which is approximate but
+    /// faster.
     /// @return @c false if the bounding box is empty (in which case
     /// the bbox is set to its default value).
     virtual bool evalActiveVoxelBoundingBox(CoordBBox& bbox) const = 0;
+
     /// @brief Return in @a dim the dimensions of the axis-aligned bounding box of all
     /// active voxels.  This is a tighter bounding box than the leaf node bounding box.
     /// @return @c false if the bounding box is empty.
@@ -321,6 +329,10 @@ public:
     /// Return the number of inactive voxels within the bounding box of all active voxels.
     virtual Index64 inactiveVoxelCount() const;
 
+    /// Return the total number of active tiles.
+    /// @note This method is not virtual so as to not change the ABI.
+    Index64 activeTileCount() const { return mRoot.onTileCount(); }
+
     /// Return the minimum and maximum active values in this tree.
     void evalMinMax(ValueType &min, ValueType &max) const;
 
@@ -460,8 +472,7 @@ public:
     /// @brief Add a tile containing voxel (x, y, z) at the specified tree level,
     /// creating a new branch if necessary.  Delete any existing lower-level nodes
     /// that contain (x, y, z).
-    /// @note @c Level must be greater than zero (i.e., the level of leaf nodes)
-    /// and less than this tree's depth.
+    /// @note @a level must be less than this tree's depth.
     void addTile(Index level, const Coord& xyz, const ValueType& value, bool active);
 
     /// @brief Return a pointer to the node of type @c NodeT that contains voxel (x, y, z)
@@ -572,6 +583,35 @@ public:
     /// are marked as active in this tree but left with their original values.
     template<typename OtherRootNodeType>
     void topologyUnion(const Tree<OtherRootNodeType>& other);
+
+    /// @brief Intersects this tree's set of active values with the active values
+    /// of the other tree, whose @c ValueType may be different.
+    /// @details The resulting state of a value is active only if the corresponding
+    /// value was already active AND if it is active in the other tree. Also, a
+    /// resulting value maps to a voxel if the corresponding value
+    /// already mapped to an active voxel in either of the two grids
+    /// and it maps to an active tile or voxel in the other grid.
+    ///
+    /// @note This operation can delete branches in this grid if they
+    /// overlap with inactive tiles in the other grid. Likewise active
+    /// voxels can be turned into unactive voxels resulting in leaf
+    /// nodes with no active values. Thus, it is recommended to
+    /// subsequently call prune.
+    template<typename OtherRootNodeType>
+    void topologyIntersection(const Tree<OtherRootNodeType>& other);
+
+    /// @brief Difference this tree's set of active values with the active values
+    /// of the other tree, whose @c ValueType may be different. So a
+    /// resulting voxel will be active only if the original voxel is
+    /// active in this tree and inactive in the other tree.
+    ///
+    /// @note This operation can delete branches in this grid if they
+    /// overlap with active tiles in the other grid. Likewise active
+    /// voxels can be turned into inactive voxels resulting in leaf
+    /// nodes with no active values. Thus, it is recommended to
+    /// subsequently call prune.
+    template<typename OtherRootNodeType>
+    void topologyDifference(const Tree<OtherRootNodeType>& other);
 
     /*! For a given function @c f, use sparse traversal to compute <tt>f(this, other)</tt>
      *  over all corresponding pairs of values (tile or voxel) of this tree and the other tree
@@ -1038,13 +1078,34 @@ protected:
 }; // end of Tree class
 
 
-/// Tree4<T, N1, N2, N3>::Type is the type of a four-level tree
+/// @brief Tree3<T, N1, N2>::Type is the type of a three-level tree
+/// (Root, Internal, Leaf) with value type T and
+/// internal and leaf node log dimensions N1 and N2, respectively.
+/// @note This is NOT the standard tree configuration (Tree4 is).
+template<typename T, Index N1, Index N2>
+struct Tree3 {
+    typedef Tree<RootNode<InternalNode<LeafNode<T, N2>, N1> > > Type;
+};
+
+
+/// @brief Tree4<T, N1, N2, N3>::Type is the type of a four-level tree
 /// (Root, Internal, Internal, Leaf) with value type T and
 /// internal and leaf node log dimensions N1, N2 and N3, respectively.
-/// This is the standard tree configuration.
+/// @note This is the standard tree configuration.
 template<typename T, Index N1, Index N2, Index N3>
 struct Tree4 {
     typedef Tree<RootNode<InternalNode<InternalNode<LeafNode<T, N3>, N2>, N1> > > Type;
+};
+
+
+/// @brief Tree5<T, N1, N2, N3, N4>::Type is the type of a five-level tree
+/// (Root, Internal, Internal, Internal, Leaf) with value type T and
+/// internal and leaf node log dimensions N1, N2, N3 and N4, respectively.
+/// @note This is NOT the standard tree configuration (Tree4 is).
+template<typename T, Index N1, Index N2, Index N3, Index N4>
+struct Tree5 {
+    typedef Tree<RootNode<InternalNode<InternalNode<InternalNode<LeafNode<T, N4>, N3>, N2>, N1> > >
+        Type;
 };
 
 
@@ -1610,6 +1671,23 @@ Tree<RootNodeType>::topologyUnion(const Tree<OtherRootNodeType>& other)
     mRoot.topologyUnion(other.getRootNode());
 }
 
+template<typename RootNodeType>
+template<typename OtherRootNodeType>
+inline void
+Tree<RootNodeType>::topologyIntersection(const Tree<OtherRootNodeType>& other)
+{
+    this->clearAllAccessors();
+    mRoot.topologyIntersection(other.getRootNode());
+}
+
+template<typename RootNodeType>
+template<typename OtherRootNodeType>
+inline void
+Tree<RootNodeType>::topologyDifference(const Tree<OtherRootNodeType>& other)
+{
+    this->clearAllAccessors();
+    mRoot.topologyDifference(other.getRootNode());
+}
 
 ////////////////////////////////////////
 
@@ -1619,7 +1697,7 @@ Tree<RootNodeType>::topologyUnion(const Tree<OtherRootNodeType>& other)
 template<typename ValueT, typename CombineOp>
 struct CombineOpAdapter
 {
-    CombineOpAdapter(CombineOp& op): op(op) {}
+    CombineOpAdapter(CombineOp& _op): op(_op) {}
 
     void operator()(CombineArgs<ValueT>& args) const {
         op(args.a(), args.b(), args.result());
@@ -1871,31 +1949,24 @@ template<typename RootNodeType>
 inline bool
 Tree<RootNodeType>::evalLeafBoundingBox(CoordBBox& bbox) const
 {
-    if (this->empty()) {
-        bbox = CoordBBox(); // return default bbox
-        return false;// empty
-    }
+    bbox.reset(); // default invalid bbox
 
-    bbox.min() =  Coord::max();
-    bbox.max() = -Coord::max();
+    if (this->empty()) return false;  // empty
 
-    Coord ijk;
-    for (LeafCIter bIter(*this); bIter; ++bIter) {
-        bIter->getOrigin(ijk);
-        bbox.expand(ijk);
-    }
-    bbox.max() += Coord(LeafNodeType::dim()-1);
-    return true; // not empty
+    mRoot.evalActiveBoundingBox(bbox, false);
+
+    return true;// not empty
 }
 
 template<typename RootNodeType>
 inline bool
 Tree<RootNodeType>::evalActiveVoxelBoundingBox(CoordBBox& bbox) const
 {
-    bbox = CoordBBox(); // default invalid bbox
+    bbox.reset(); // default invalid bbox
+
     if (this->empty()) return false;  // empty
 
-    mRoot.evalActiveVoxelBoundingBox(bbox);
+    mRoot.evalActiveBoundingBox(bbox, true);
 
     return true;// not empty
 }
@@ -1957,7 +2028,7 @@ Tree<RootNodeType>::print(std::ostream& os, int verboseLevel) const
     struct OnExit {
         std::ostream& os;
         std::streamsize savedPrecision;
-        OnExit(std::ostream& os): os(os), savedPrecision(os.precision()) {}
+        OnExit(std::ostream& _os): os(_os), savedPrecision(os.precision()) {}
         ~OnExit() { os.precision(savedPrecision); }
     };
     OnExit restorePrecision(os);

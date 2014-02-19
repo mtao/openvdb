@@ -324,6 +324,22 @@ public:
         return *this;
     }
 
+    /// Return a reference to itsef after the exponent has been
+    /// applied to all the vector components.
+    inline const Vec3<T>& exp()
+    {
+        this->mm[0] = std::exp(this->mm[0]);
+        this->mm[1] = std::exp(this->mm[1]);
+        this->mm[2] = std::exp(this->mm[2]);
+        return *this;
+    }
+
+    /// Return the sum of all the vector components.
+    inline T sum() const
+    {
+        return this->mm[0] + this->mm[1] + this->mm[2];
+    }
+
     /// this = normalized this
     bool normalize(T eps = T(1.0e-7))
     {
@@ -598,16 +614,15 @@ inline Vec3<T> maxComponent(const Vec3<T> &v1, const Vec3<T> &v2)
             std::max(v1.z(), v2.z()));
 }
 
-typedef Vec3<int>          Vec3i;
-typedef Vec3<unsigned int> Vec3ui;
-typedef Vec3<float>        Vec3s;
-typedef Vec3<double>       Vec3d;
+/// @brief Return a vector with the exponent applied to each of
+/// the components of the input vector. 
+template <typename T>
+inline Vec3<T> Exp(Vec3<T> v) { return v.exp(); }
 
-#if DWREAL_IS_DOUBLE == 1
-typedef Vec3d    Vec3f;
-#else
-typedef Vec3s    Vec3f;
-#endif  // DWREAL_IS_DOUBLE
+typedef Vec3<int32_t>   Vec3i;
+typedef Vec3<uint32_t>  Vec3ui;
+typedef Vec3<float>     Vec3s;
+typedef Vec3<double>    Vec3d;
 
 } // namespace math
 } // namespace OPENVDB_VERSION_NAME

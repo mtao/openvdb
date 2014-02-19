@@ -31,7 +31,7 @@
 #ifndef OPENVDB_MATH_BBOX_HAS_BEEN_INCLUDED
 #define OPENVDB_MATH_BBOX_HAS_BEEN_INCLUDED
 
-#include "Math.h" // for isApproxEqual() and tolerance()
+#include "Math.h" // for math::isApproxEqual() and math::Tolerance()
 #include "Vec3.h"
 #include <ostream>
 #include <algorithm> // for min/max
@@ -61,7 +61,7 @@ public:
     /// @brief Constructor based on a minimum and maximum point.
     /// If sorted is false the points will be sorted by x,y,z component.
     BBox(const Vec3T& xyzMin, const Vec3T& xyzMax, bool sorted);
-    
+
     /// @brief Contruct a cubical BBox from a minimum coordinate and a
     /// single edge length.
     /// @note inclusive for integral <tt>ElementType</tt>s
@@ -115,7 +115,7 @@ public:
 
     /// @brief Returns the extents of the BBox, i.e. the length per axis
     /// for floating points values or number of grids per axis points
-    /// integral values. 
+    /// integral values.
     /// @note inclusive for integral <tt>ElementType</tt>s
     Vec3T extents() const;
 
@@ -139,10 +139,10 @@ public:
 
     /// Pad this bounding box.
     void expand(ElementType padding);
-    
+
     /// Expand this bounding box to enclose point (x, y, z).
     void expand(const Vec3T& xyz);
-    
+
     /// Union this bounding box with the given bounding box.
     void expand(const BBox&);
     // @brief Union this bbox with the cubical bbox defined from xyzMin and
@@ -152,6 +152,14 @@ public:
 
     /// Translate this bounding box by \f$(t_x, t_y, t_z)\f$.
     void translate(const Vec3T& t);
+
+    /// Apply a map to this bounding box
+    template<typename MapType>
+    BBox applyMap(const MapType& map) const;
+
+     /// Apply the inverse of a map to this bounding box
+    template<typename MapType>
+    BBox applyInverseMap(const MapType& map) const;
 
     /// Unserialize this bounding box from the given stream.
     void read(std::istream& is) { mMin.read(is); mMax.read(is); }
@@ -266,7 +274,7 @@ BBox<Vec3T>::isSorted() const
     if (boost::is_integral<ElementType>::value) {
         return (mMin[0] <= mMax[0] && mMin[1] <= mMax[1] && mMin[2] <= mMax[2]);
     } else {
-        ElementType t = tolerance<ElementType>::value();
+        ElementType t = math::Tolerance<ElementType>::value();
         return (mMin[0] < (mMax[0] + t) && mMin[1] < (mMax[1] + t) && mMin[2] < (mMax[2] + t));
     }
 }
@@ -303,7 +311,7 @@ BBox<Vec3T>::isInside(const Vec3T& xyz) const
                xyz[1] >= mMin[1] && xyz[1] <= mMax[1] &&
                xyz[2] >= mMin[2] && xyz[2] <= mMax[2];
     } else {
-        ElementType t = tolerance<ElementType>::value();
+        ElementType t = math::Tolerance<ElementType>::value();
         return xyz[0] > (mMin[0]-t) && xyz[0] < (mMax[0]+t) &&
                xyz[1] > (mMin[1]-t) && xyz[1] < (mMax[1]+t) &&
                xyz[2] > (mMin[2]-t) && xyz[2] < (mMax[2]+t);
@@ -320,7 +328,7 @@ BBox<Vec3T>::isInside(const BBox& b) const
                b.min()[1] >= mMin[1]  && b.max()[1] <= mMax[1] &&
                b.min()[2] >= mMin[2]  && b.max()[2] <= mMax[2];
     } else {
-        ElementType t = tolerance<ElementType>::value();
+        ElementType t = math::Tolerance<ElementType>::value();
         return (b.min()[0]-t) > mMin[0]  && (b.max()[0]+t) < mMax[0] &&
                (b.min()[1]-t) > mMin[1]  && (b.max()[1]+t) < mMax[1] &&
                (b.min()[2]-t) > mMin[2]  && (b.max()[2]+t) < mMax[2];
@@ -337,7 +345,7 @@ BBox<Vec3T>::hasOverlap(const BBox& b) const
                mMax[1] >= b.min()[1] && mMin[1] <= b.max()[1] &&
                mMax[2] >= b.min()[2] && mMin[2] <= b.max()[2];
     } else {
-        ElementType t = tolerance<ElementType>::value();
+        ElementType t = math::Tolerance<ElementType>::value();
         return mMax[0] > (b.min()[0]-t) && mMin[0] < (b.max()[0]+t) &&
                mMax[1] > (b.min()[1]-t) && mMin[1] < (b.max()[1]+t) &&
                mMax[2] > (b.min()[2]-t) && mMin[2] < (b.max()[2]+t);
@@ -401,6 +409,41 @@ BBox<Vec3T>::translate(const Vec3T& dx)
     mMax += dx;
 }
 
+template<typename Vec3T>
+template<typename MapType>  
+inline BBox<Vec3T>
+BBox<Vec3T>::applyMap(const MapType& map) const
+{
+    typedef Vec3<double> Vec3R;
+    BBox<Vec3T> bbox;
+    bbox.expand(map.applyMap(Vec3R(mMin[0], mMin[1], mMin[2])));
+    bbox.expand(map.applyMap(Vec3R(mMin[0], mMin[1], mMax[2])));
+    bbox.expand(map.applyMap(Vec3R(mMin[0], mMax[1], mMin[2])));
+    bbox.expand(map.applyMap(Vec3R(mMax[0], mMin[1], mMin[2])));
+    bbox.expand(map.applyMap(Vec3R(mMax[0], mMax[1], mMin[2])));
+    bbox.expand(map.applyMap(Vec3R(mMax[0], mMin[1], mMax[2])));
+    bbox.expand(map.applyMap(Vec3R(mMin[0], mMax[1], mMax[2])));
+    bbox.expand(map.applyMap(Vec3R(mMax[0], mMax[1], mMax[2])));
+    return bbox;
+}
+
+template<typename Vec3T>
+template<typename MapType>  
+inline BBox<Vec3T>
+BBox<Vec3T>::applyInverseMap(const MapType& map) const
+{
+    typedef Vec3<double> Vec3R;
+    BBox<Vec3T> bbox;
+    bbox.expand(map.applyInverseMap(Vec3R(mMin[0], mMin[1], mMin[2])));
+    bbox.expand(map.applyInverseMap(Vec3R(mMin[0], mMin[1], mMax[2])));
+    bbox.expand(map.applyInverseMap(Vec3R(mMin[0], mMax[1], mMin[2])));
+    bbox.expand(map.applyInverseMap(Vec3R(mMax[0], mMin[1], mMin[2])));
+    bbox.expand(map.applyInverseMap(Vec3R(mMax[0], mMax[1], mMin[2])));
+    bbox.expand(map.applyInverseMap(Vec3R(mMax[0], mMin[1], mMax[2])));
+    bbox.expand(map.applyInverseMap(Vec3R(mMin[0], mMax[1], mMax[2])));
+    bbox.expand(map.applyInverseMap(Vec3R(mMax[0], mMax[1], mMax[2])));
+    return bbox;
+}  
 
 ////////////////////////////////////////
 

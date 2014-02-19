@@ -23,10 +23,10 @@ PROJECT_NAME           = OpenVDB
 # This could be handy for archiving the generated documentation or 
 # if some version control system is used.
 
-PROJECT_NUMBER         = 2.0.0b1
+PROJECT_NUMBER         = 2.2.0
 
-ALIASES += vdbnamespace="openvdb::v2_0_0b1"
-PREDEFINED = OPENVDB_VERSION_NAME=v2_0_0b1
+ALIASES += vdbnamespace="openvdb::v2_2_0"
+PREDEFINED = OPENVDB_VERSION_NAME=v2_2_0
 
 PREDEFINED += __declspec(x):= __attribute__(x):=
 #EXPAND_AS_DEFINED = \
@@ -386,12 +386,6 @@ MAX_INITIALIZER_LINES  = 30
 
 SHOW_USED_FILES        = YES
 
-# If the sources in your project are distributed over multiple directories 
-# then setting the SHOW_DIRECTORIES tag to YES will show the directory hierarchy 
-# in the documentation. The default is NO.
-
-SHOW_DIRECTORIES       = NO
-
 # The FILE_VERSION_FILTER tag can be used to specify a program or script that 
 # doxygen should invoke to get the current version for each file (typically from the 
 # version control system). Doxygen will invoke the program by executing (via 
@@ -466,6 +460,7 @@ INPUT                  = . \
                          io \
                          math \
                          metadata \
+                         python/pyopenvdb.h \
                          tools \
                          tree \
                          util \
@@ -475,7 +470,8 @@ INPUT                  = . \
                          doc/changes.txt \
                          doc/codingstyle.txt \
                          doc/api_0_98_0.txt \
-                         doc/examplecode.txt
+                         doc/examplecode.txt \
+                         doc/python.txt
 
 # If the value of the INPUT tag contains directories, you can use the 
 # FILE_PATTERNS tag to specify one or more wildcard pattern (like *.cpp 
@@ -682,12 +678,6 @@ HTML_FOOTER            =
 # stylesheet in the HTML output directory as well, or it will be erased!
 
 HTML_STYLESHEET        = 
-
-# If the HTML_ALIGN_MEMBERS tag is set to YES, the members of classes, 
-# files or namespaces will be aligned in HTML using tables. If set to 
-# NO a bullet list will be used.
-
-HTML_ALIGN_MEMBERS     = YES
 
 # If the GENERATE_HTMLHELP tag is set to YES, additional index files 
 # will be generated that can be used as input for tools like the 

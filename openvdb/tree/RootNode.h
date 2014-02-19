@@ -296,6 +296,13 @@ private:
         ValueT* operator->() const { return &(this->getValue()); }
 
         void setValue(const ValueT& v) const { assert(isTile(mIter)); getTile(mIter).value = v; }
+
+        template<typename ModifyOp>
+        void modifyValue(const ModifyOp& op) const
+        {
+            assert(isTile(mIter));
+            op(getTile(mIter).value);
+        }
     }; // ValueIter
 
     template<typename RootNodeT, typename MapIterT, typename ChildNodeT, typename ValueT>
@@ -383,8 +390,12 @@ public:
     Index64 memUsage() const;
 
     /// @brief Expand the specified bbox so it includes the active tiles of
-    /// this root node as well as all the active values in its child nodes.
-    void evalActiveVoxelBoundingBox(CoordBBox& bbox) const;
+    /// this root node as well as all the active values in its child
+    /// nodes. If visitVoxels is false LeafNodes will be approximated
+    /// as dense, i.e. with all voxels active. Else the individual
+    /// active voxels are visited to produce a tight bbox.
+    void evalActiveBoundingBox(CoordBBox& bbox, bool visitVoxels = true) const;
+    OPENVDB_DEPRECATED void evalActiveVoxelBoundingBox(CoordBBox& bbox) const;
 
     /// Return the bounding box of this RootNode, i.e., an infinite bounding box.
     static CoordBBox getNodeBoundingBox() { return CoordBBox::inf(); }
@@ -392,7 +403,12 @@ public:
     /// @brief Change inactive tiles or voxels with a value equal to +/- the
     /// old background to the specified value (with the same sign). Active values
     /// are unchanged.
-    void setBackground(const ValueType& value);
+    /// @param value The new background value
+    /// @param updateChildNodes If true (which is the default) the
+    /// background values of the child nodes is also updated. Else
+    /// only the background value stored in the RootNode itself is changed.
+    void setBackground(const ValueType& value, bool updateChildNodes = true);
+
     /// Return this node's background value.
     const ValueType& background() const { return mBackground; }
 
@@ -452,6 +468,7 @@ public:
     Index64 offVoxelCount() const;
     Index64 onLeafVoxelCount() const;
     Index64 offLeafVoxelCount() const;
+    Index64 onTileCount() const;
 
     bool isValueOn(const Coord& xyz) const;
 
@@ -736,6 +753,35 @@ public:
     template<typename OtherChildType>
     void topologyUnion(const RootNode<OtherChildType>& other);
 
+    /// @brief Intersects this tree's set of active values with the active values
+    /// of the other tree, whose @c ValueType may be different.
+    /// @details The resulting state of a value is active only if the corresponding 
+    /// value was already active AND if it is active in the other tree. Also, a
+    /// resulting value maps to a voxel if the corresponding value
+    /// already mapped to an active voxel in either of the two grids
+    /// and it maps to an active tile or voxel in the other grid.
+    ///
+    /// @note This operation can delete branches in this grid if they
+    /// overlap with inactive tiles in the other grid. Likewise active
+    /// voxels can be turned into inactive voxels resulting in leaf
+    /// nodes with no active values. Thus, it is recommended to
+    /// subsequently call prune.
+    template<typename OtherChildType>
+    void topologyIntersection(const RootNode<OtherChildType>& other);
+
+    /// @brief Difference this tree's set of active values with the active values
+    /// of the other tree, whose @c ValueType may be different. So a
+    /// resulting voxel will be active only if the original voxel is
+    /// active in this tree and inactive in the other tree.
+    ///
+    /// @note This operation can delete branches in this grid if they
+    /// overlap with active tiles in the other grid. Likewise active
+    /// voxels can be turned into inactive voxels resulting in leaf
+    /// nodes with no active values. Thus, it is recommended to
+    /// subsequently call prune.
+    template<typename OtherChildType>
+    void topologyDifference(const RootNode<OtherChildType>& other);
+
     template<typename CombineOp>
     void combine(RootNode& other, CombineOp&, bool prune = false);
 
@@ -941,23 +987,25 @@ RootNode<ChildT>::operator=(const RootNode& other)
 
 template<typename ChildT>
 inline void
-RootNode<ChildT>::setBackground(const ValueType& background)
+RootNode<ChildT>::setBackground(const ValueType& background, bool updateChildNodes)
 {
     if (math::isExactlyEqual(background, mBackground)) return;
 
-    // Traverse the tree, replacing occurrences of mBackground with background
-    // and -mBackground with -background.
-    for (MapIter iter=mTable.begin(); iter!=mTable.end(); ++iter) {
-        ChildT *child = iter->second.child;
-        if (child) {
-            child->resetBackground(/*old=*/mBackground, /*new=*/background);
-        } else {
-            Tile& tile = getTile(iter);
-            if (tile.active) continue;//only change inactive tiles
-            if (math::isApproxEqual(tile.value, mBackground)) {
-                tile.value = background;
-            } else if (math::isApproxEqual(tile.value, negative(mBackground))) {
-                tile.value = negative(background);
+    if (updateChildNodes) {
+        // Traverse the tree, replacing occurrences of mBackground with background
+        // and -mBackground with -background.
+        for (MapIter iter=mTable.begin(); iter!=mTable.end(); ++iter) {
+            ChildT *child = iter->second.child;
+            if (child) {
+                child->resetBackground(/*old=*/mBackground, /*new=*/background);
+            } else {
+                Tile& tile = getTile(iter);
+                if (tile.active) continue;//only change inactive tiles
+                if (math::isApproxEqual(tile.value, mBackground)) {
+                    tile.value = background;
+                } else if (math::isApproxEqual(tile.value, math::negative(mBackground))) {
+                    tile.value = math::negative(background);
+                }
             }
         }
     }
@@ -1196,6 +1244,18 @@ RootNode<ChildT>::evalActiveVoxelBoundingBox(CoordBBox& bbox) const
     }
 }
 
+template<typename ChildT>
+inline void
+RootNode<ChildT>::evalActiveBoundingBox(CoordBBox& bbox, bool visitVoxels) const
+{
+    for (MapCIter iter=mTable.begin(); iter!=mTable.end(); ++iter) {
+        if (const ChildT *child = iter->second.child) {
+            child->evalActiveBoundingBox(bbox, visitVoxels);
+        } else if (isTileOn(iter)) {
+            bbox.expand(iter->first, ChildT::DIM);
+        }
+    }
+}
 
 template<typename ChildT>
 inline void
@@ -1336,6 +1396,20 @@ RootNode<ChildT>::offLeafVoxelCount() const
     return sum;
 }
 
+template<typename ChildT>
+inline Index64
+RootNode<ChildT>::onTileCount() const
+{
+    Index64 sum = 0;
+    for (MapCIter i = mTable.begin(), e = mTable.end(); i != e; ++i) {
+        if (isChild(i)) {
+            sum += getChild(i).onTileCount();
+        } else if (isTileOn(i)) {
+            sum += 1;
+        }
+    }
+    return sum;
+}
 
 ////////////////////////////////////////
 
@@ -1831,7 +1905,9 @@ template<typename DenseT>
 inline void
 RootNode<ChildT>::copyToDense(const CoordBBox& bbox, DenseT& dense) const
 {
-    const size_t xStride = dense.xStride(), yStride = dense.yStride();// zStride=1
+    typedef typename DenseT::ValueType DenseValueType;
+
+    const size_t xStride = dense.xStride(), yStride = dense.yStride(), zStride = dense.zStride();
     const Coord& min = dense.bbox().min();
     CoordBBox nodeBBox;
     for (Coord xyz = bbox.min(); xyz[0] <= bbox.max()[0]; xyz[0] = nodeBBox.max()[0] + 1) {
@@ -1850,12 +1926,14 @@ RootNode<ChildT>::copyToDense(const CoordBBox& bbox, DenseT& dense) const
                 } else {//is background or a tile value
                     const ValueType value = iter==mTable.end() ? mBackground : getTile(iter).value;
                     sub.translate(-min);
-                    ValueType* a0 = dense.data() + sub.min()[2];
+                    DenseValueType* a0 = dense.data() + zStride*sub.min()[2];
                     for (Int32 x=sub.min()[0], ex=sub.max()[0]+1; x<ex; ++x) {
-                        ValueType* a1 = a0 + x*xStride;
+                        DenseValueType* a1 = a0 + x*xStride;
                         for (Int32 y=sub.min()[1], ey=sub.max()[1]+1; y<ey; ++y) {
-                            ValueType* a2 = a1 + y*yStride;
-                            for (Int32 z=sub.min()[2], ez=sub.max()[2]+1; z<ez; ++z) *a2++ = value;
+                            DenseValueType* a2 = a1 + y*yStride;
+                            for (Int32 z=sub.min()[2], ez=sub.max()[2]+1; z<ez; ++z, a2 += zStride) {
+                                *a2 =  DenseValueType(value);
+                            }
                         }
                     }
                 }
@@ -2178,7 +2256,7 @@ inline void
 RootNode<ChildT>::addTile(Index level, const Coord& xyz,
                           const ValueType& value, bool state)
 {
-    if (LEVEL >= level && level > 0) {
+    if (LEVEL >= level) {
         MapIter iter = this->findCoord(xyz);
         if (iter == mTable.end()) {//background
             if (LEVEL > level) {
@@ -2213,7 +2291,7 @@ inline void
 RootNode<ChildT>::addTileAndCache(Index level, const Coord& xyz, const ValueType& value,
                                   bool state, AccessorT& acc)
 {
-    if (LEVEL >= level && level > 0) {
+    if (LEVEL >= level) {
         MapIter iter = this->findCoord(xyz);
         if (iter == mTable.end()) {//background
             if (LEVEL > level) {
@@ -2416,7 +2494,7 @@ template<typename ChildT>
 inline void
 RootNode<ChildT>::signedFloodFill()
 {
-    this->signedFloodFill(mBackground, negative(mBackground));
+    this->signedFloodFill(mBackground, math::negative(mBackground));
 }
 
 
@@ -2502,7 +2580,7 @@ RootNode<ChildT>::merge(RootNode& other)
                         setChild(j, child);
                     }
                 } else { // merge both child nodes
-                    getChild(j).merge<MERGE_ACTIVE_STATES>(getChild(i),
+                    getChild(j).template merge<MERGE_ACTIVE_STATES>(getChild(i),
                         other.mBackground, mBackground);
                 }
             } else if (other.isTileOn(i)) {
@@ -2529,7 +2607,8 @@ RootNode<ChildT>::merge(RootNode& other)
                     child.resetBackground(other.mBackground, mBackground);
                     setChild(j, child);
                 } else { // merge both child nodes
-                    getChild(j).merge<MERGE_NODES>(getChild(i), other.mBackground, mBackground);
+                    getChild(j).template merge<MERGE_NODES>(
+                        getChild(i), other.mBackground, mBackground);
                 }
             }
         }
@@ -2552,11 +2631,12 @@ RootNode<ChildT>::merge(RootNode& other)
                     setChild(j, child);
                     if (tile.active) {
                         // Merge the other node's child with this node's active tile.
-                        child.merge<MERGE_ACTIVE_STATES_AND_NODES>(tile.value, tile.active);
+                        child.template merge<MERGE_ACTIVE_STATES_AND_NODES>(
+                            tile.value, tile.active);
                     }
                 } else /*if (isChild(j))*/ {
                     // Merge the other node's child into this node's child.
-                    getChild(j).merge<MERGE_ACTIVE_STATES_AND_NODES>(getChild(i),
+                    getChild(j).template merge<MERGE_ACTIVE_STATES_AND_NODES>(getChild(i),
                         other.mBackground, mBackground);
                 }
             } else if (other.isTileOn(i)) {
@@ -2569,7 +2649,8 @@ RootNode<ChildT>::merge(RootNode& other)
                 } else if (isChild(j)) {
                     // Merge the other node's active tile into this node's child.
                     const Tile& tile = getTile(i);
-                    getChild(j).merge<MERGE_ACTIVE_STATES_AND_NODES>(tile.value, tile.active);
+                    getChild(j).template merge<MERGE_ACTIVE_STATES_AND_NODES>(
+                        tile.value, tile.active);
                 }
             } // else if (other.isTileOff(i)) {} // ignore the other node's inactive tiles
         }
@@ -2622,6 +2703,71 @@ RootNode<ChildT>::topologyUnion(const RootNode<OtherChildType>& other)
     }
 }
 
+template<typename ChildT>
+template<typename OtherChildType>
+inline void
+RootNode<ChildT>::topologyIntersection(const RootNode<OtherChildType>& other)
+{
+    typedef RootNode<OtherChildType> OtherRootT;
+    typedef typename OtherRootT::MapCIter OtherCIterT;
+
+    enforceSameConfiguration(other);
+
+    std::set<Coord> tmp;//keys to erase
+    for (MapIter i = mTable.begin(), e = mTable.end(); i != e; ++i) {
+        OtherCIterT j = other.mTable.find(i->first);
+        if (this->isChild(i)) {
+            if (j == other.mTable.end() || other.isTileOff(j)) {
+                tmp.insert(i->first);//delete child branch
+            } else if (other.isChild(j)) { // intersect with child branch
+                this->getChild(i).topologyIntersection(other.getChild(j), mBackground);
+            }
+        } else if (this->isTileOn(i)) {
+            if (j == other.mTable.end() || other.isTileOff(j)) {
+                this->setTile(i, Tile(this->getTile(i).value, false));//turn inactive
+            } else if (other.isChild(j)) { //replace with a child branch with identical topology
+                ChildT* child = new ChildT(other.getChild(j), this->getTile(i).value, TopologyCopy());
+                this->setChild(i, *child);
+            }
+        }
+    }
+    for (std::set<Coord>::iterator i = tmp.begin(), e = tmp.end(); i != e; ++i) mTable.erase(*i);
+}
+
+template<typename ChildT>
+template<typename OtherChildType>
+inline void
+RootNode<ChildT>::topologyDifference(const RootNode<OtherChildType>& other)
+{
+    typedef RootNode<OtherChildType> OtherRootT;
+    typedef typename OtherRootT::MapCIter OtherCIterT;
+
+    enforceSameConfiguration(other);
+    
+    for (OtherCIterT i = other.mTable.begin(), e = other.mTable.end(); i != e; ++i) {
+        MapIter j = mTable.find(i->first);
+        if (other.isChild(i)) {
+            if (j == mTable.end() || this->isTileOff(j)) {
+                //do nothing
+            } else if (this->isChild(j)) { // difference with child branch
+                this->getChild(j).topologyDifference(other.getChild(i), mBackground);
+            } else if (this->isTileOn(j)) {
+                // this is an active tile so create a child node and descent
+                ChildT* child = new ChildT(j->first, this->getTile(j).value, true);
+                child->topologyDifference(other.getChild(i), mBackground);
+                this->setChild(j, *child);
+            }
+        } else if (other.isTileOn(i)) { // other is an active tile
+            if (j == mTable.end() || this->isTileOff(j)) {
+                // do nothing
+            } else if (this->isChild(j)) {
+                mTable.erase(j->first);//delete child
+            } else if (this->isTileOn(j)) {
+                this->setTile(j, Tile(this->getTile(j).value, false));
+            }
+        }
+    }
+}
 
 ////////////////////////////////////////
 
@@ -2719,7 +2865,7 @@ RootNode<ChildT>::combine2(const RootNode& other0, const RootNode& other1,
             if (!isChild(thisIter)) {
                 // Add a new child with the same coordinates, etc. as the other node's child.
                 setChild(thisIter,
-                    *(new ChildT(otherChild.getOrigin(), getTile(thisIter).value)));
+                    *(new ChildT(otherChild.origin(), getTile(thisIter).value)));
             }
             ChildT& child = getChild(thisIter);
 

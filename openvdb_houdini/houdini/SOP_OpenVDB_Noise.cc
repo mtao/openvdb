@@ -71,7 +71,7 @@ struct FractalBoltzmanGenerator
             point = (point * curfreq);
 
             // convert to float for UT_PNoise
-            float location[3] = {point[0], point[1], point[2]};
+            float location[3] = { float(point[0]), float(point[1]), float(point[2]) };
 
             // generate noise in the [-1,1] range
             signal = 2.0f*UT_PNoise::noise3D(location) - 1.0f;
@@ -131,7 +131,7 @@ public:
 
 protected:
     virtual OP_ERROR cookMySop(OP_Context&);
-    virtual unsigned disableParms();
+    virtual bool updateParmsFlags();
 
 private:
     // Process the given grid and return the output grid.
@@ -274,22 +274,22 @@ SOP_OpenVDB_Noise::SOP_OpenVDB_Noise(OP_Network* net,
 ////////////////////////////////////////
 
 
-unsigned
-SOP_OpenVDB_Noise::disableParms()
+bool
+SOP_OpenVDB_Noise::updateParmsFlags()
 {
 
-    unsigned changed = 0;
+    bool changed = false;
 
-    changed += enableParm("maskGroup", mSecondInputConnected);
-    changed += enableParm("mask", mSecondInputConnected);
-    changed += enableParm("thres", mSecondInputConnected);
-    changed += enableParm("fall", mSecondInputConnected);
+    changed |= enableParm("maskGroup", mSecondInputConnected);
+    changed |= enableParm("mask", mSecondInputConnected);
+    changed |= enableParm("thres", mSecondInputConnected);
+    changed |= enableParm("fall", mSecondInputConnected);
 
-    setVisibleState("maskHeading", mSecondInputConnected);
-    setVisibleState("maskGroup", mSecondInputConnected);
-    setVisibleState("mask", mSecondInputConnected);
-    setVisibleState("thres", mSecondInputConnected);
-    setVisibleState("fall", mSecondInputConnected);
+    changed |= setVisibleState("maskHeading", mSecondInputConnected);
+    changed |= setVisibleState("maskGroup", mSecondInputConnected);
+    changed |= setVisibleState("mask", mSecondInputConnected);
+    changed |= setVisibleState("thres", mSecondInputConnected);
+    changed |= setVisibleState("fall", mSecondInputConnected);
 
     return changed;
 }

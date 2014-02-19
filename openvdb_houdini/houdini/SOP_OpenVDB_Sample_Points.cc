@@ -117,7 +117,11 @@ struct NearestNeighborSampler<true> {
 };
 
 
-template<typename GridType, typename GA_RWPageHandleType, bool staggered = false, bool NearestNeighbor = false>
+template<
+    typename GridType,
+    typename GA_RWPageHandleType,
+    bool staggered = false,
+    bool NearestNeighbor = false>
 class PointSampler
 {
 public:
@@ -131,7 +135,6 @@ public:
         mThreaded(threaded),
         mGdp(gdp),
         mAttribPageHandle(handle.getAttribute()),
-        mAttribute(handle.getAttribute()),
         mInterrupter(interrupter)
     {
     }
@@ -142,7 +145,6 @@ public:
         mThreaded(other.mThreaded),
         mGdp(other.mGdp),
         mAttribPageHandle(other.mAttribPageHandle),
-        mAttribute(other.mAttribute),
         mInterrupter(other.mInterrupter)
     {
     }
@@ -198,7 +200,8 @@ public:
                     point = mGrid.worldToIndex(cvdb::Vec3R(pos[0], pos[1], pos[2]));
 
                     if (NearestNeighbor) {
-                        NearestNeighborSampler<staggered>::template sample<Accessor>(accessor, point, value);
+                        NearestNeighborSampler<staggered>::template sample<Accessor>(
+                            accessor, point, value);
                     } else {
                         BoxSampler<staggered>::template sample<Accessor>(accessor, point, value);
                     }
@@ -231,7 +234,6 @@ private:
     bool                 mThreaded;
     GU_Detail*           mGdp;
     GA_RWPageHandleType  mAttribPageHandle;
-    GA_Attribute* mAttribute;
     UT_AutoInterrupt*    mInterrupter;
 }; // class PointSampler
 
@@ -324,7 +326,6 @@ SOP_OpenVDB_Sample_Points::sample(OP_Context& context)
         matchGroup(const_cast<GU_Detail&>(*bGdp), groupStr.toStdString());
 
     // scratch variables used in the loop
-    GEO_AttributeHandle attribHandle;
     GA_Defaults defaultFloat(0.0), defaultInt(0);
 
     int numScalarGrids  = 0;
@@ -351,7 +352,7 @@ SOP_OpenVDB_Sample_Points::sample(OP_Context& context)
             ss << "VDB_" << numUnnamedGrids++;
             gridName = ss.str();
         }
-        
+
         // remove any dot "." characters, attribute names can't contain this.
         std::replace(gridName.begin(), gridName.end(), '.', '_');
 
