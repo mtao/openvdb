@@ -46,6 +46,7 @@
 #include <openvdb/openvdb.h>
 #include <openvdb/tools/GridTransformer.h>
 #include <openvdb/tools/LevelSetRebuild.h>
+#include <openvdb/tools/VectorTransformer.h> // for transformVectors()
 #include <UT/UT_Interrupt.h>
 
 namespace hvdb = openvdb_houdini;
@@ -68,7 +69,7 @@ protected:
     struct RebuildOp;
 
     virtual OP_ERROR cookMySop(OP_Context&);
-    virtual unsigned disableParms();
+    virtual bool updateParmsFlags();
 };
 
 
@@ -163,6 +164,14 @@ newSopOperator(OP_OperatorTable* table)
         .setDefault(PRMoneDefaults)
         .setRange(PRM_RANGE_RESTRICTED, 0.000001f, PRM_RANGE_UI, 1));
 
+    // Toggle to apply transform to vector values
+    parms.add(hutil::ParmFactory(PRM_TOGGLE, "xformvectors", "Transform Vectors")
+        .setDefault(PRMzeroDefaults)
+        .setHelpText(
+            "Apply the resampling transform to the voxel values of\n"
+            "vector-valued grids, in accordance with those grids'\n"
+            "Vector Type attributes.\n"));
+
     // Level set rebuild toggle
     parms.add(hutil::ParmFactory(PRM_TOGGLE, "rebuild", "Rebuild SDF")
         .setDefault(PRMoneDefaults)
@@ -202,22 +211,23 @@ newSopOperator(OP_OperatorTable* table)
 
 
 // Disable UI Parms.
-unsigned
-SOP_OpenVDB_Resample::disableParms()
+bool
+SOP_OpenVDB_Resample::updateParmsFlags()
 {
-    unsigned changed = 0;
+    bool changed = false;
 
     const int mode = evalInt("mode", 0, 0);
-    changed += enableParm("translate", mode == MODE_PARMS);
-    changed += enableParm("rotate", mode == MODE_PARMS);
-    changed += enableParm("scale", mode == MODE_PARMS);
-    changed += enableParm("pivot", mode == MODE_PARMS);
-    changed += enableParm("xOrd", mode == MODE_PARMS);
-    changed += enableParm("rOrd", mode == MODE_PARMS);
-    changed += enableParm("reference_grid", mode == MODE_REF_GRID);
-    changed += enableParm("voxel_size", mode == MODE_VOXEL_SIZE);
+    changed |= enableParm("translate", mode == MODE_PARMS);
+    changed |= enableParm("rotate", mode == MODE_PARMS);
+    changed |= enableParm("scale", mode == MODE_PARMS);
+    changed |= enableParm("pivot", mode == MODE_PARMS);
+    changed |= enableParm("xOrd", mode == MODE_PARMS);
+    changed |= enableParm("rOrd", mode == MODE_PARMS);
+    changed |= enableParm("xformvectors", mode == MODE_PARMS);
+    changed |= enableParm("reference_grid", mode == MODE_REF_GRID);
+    changed |= enableParm("voxel_size", mode == MODE_VOXEL_SIZE);
 
-    changed += enableParm("tolerance", evalInt("prune", 0, 0));
+    changed |= enableParm("tolerance", evalInt("prune", 0, 0));
 
     return changed;
 }
@@ -270,6 +280,23 @@ struct SOP_OpenVDB_Resample::RebuildOp
 }; // struct RebuildOp
 
 
+namespace {
+
+// Functor for use with UTvdbProcessTypedGridVec3() to apply a transform
+// to the voxel values of vector-valued grids
+struct VecXformOp
+{
+    openvdb::Mat4d mat;
+    VecXformOp(const openvdb::Mat4d& _mat): mat(_mat) {}
+    template<typename GridT> void operator()(GridT& grid) const
+    {
+        openvdb::tools::transformVectors(grid, mat);
+    }
+};
+
+} // unnamed namespace
+
+
 ////////////////////////////////////////
 
 
@@ -281,7 +308,7 @@ SOP_OpenVDB_Resample::cookMySop(OP_Context& context)
 
         const fpreal time = context.getTime();
 
-        // This does a shallow copy of VDB-grids and deep copy of native Houdini primitives.
+        // This does a shallow copy of VDB grids and deep copy of native Houdini primitives.
         duplicateSource(0, context);
 
         const GU_Detail* refGdp = inputGeo(1, context);
@@ -314,7 +341,8 @@ SOP_OpenVDB_Resample::cookMySop(OP_Context& context)
 
         const bool
             prune = evalInt("prune", 0, time),
-            rebuild = evalInt("rebuild", 0, time);
+            rebuild = evalInt("rebuild", 0, time),
+            xformVec = evalInt("xformvectors", 0, time);
         const float tolerance = evalFloat("tolerance", 0, time);
 
         // Get the group of grids to be resampled.
@@ -360,12 +388,20 @@ SOP_OpenVDB_Resample::cookMySop(OP_Context& context)
             if (progress.wasInterrupted()) throw std::runtime_error("Was Interrupted");
 
             GU_PrimVDB* vdb = *it;
-            const hvdb::Grid& grid = vdb->getGrid();
 
             const UT_VDBType valueType = vdb->getStorageType();
 
-            const bool isLevelSet = ((grid.getGridClass() == openvdb::GRID_LEVEL_SET)
+            const bool isLevelSet = ((vdb->getGrid().getGridClass() == openvdb::GRID_LEVEL_SET)
                 && (valueType == UT_VDB_FLOAT || valueType == UT_VDB_DOUBLE));
+
+            if (isLevelSet && !rebuild) {
+                // If the input grid is a level set but level set rebuild is disabled,
+                // set the grid's class to "unknown", to prevent the resample tool
+                // from triggering a rebuild.
+                vdb->getGrid().setGridClass(openvdb::GRID_UNKNOWN);
+            }
+
+            const hvdb::Grid& grid = vdb->getGrid();
 
             // Override the sampling order for boolean grids.
             int curOrder = samplingOrder;
@@ -404,13 +440,13 @@ SOP_OpenVDB_Resample::cookMySop(OP_Context& context)
 
                     if (samplingOrder == 0) {
                         hvdb::GridResampleToMatchOp<openvdb::tools::PointSampler> op(outGrid);
-                        GEOvdbProcessTypedGrid(*vdb, op);
+                        GEOvdbProcessTypedGridTopology(*vdb, op);
                     } else if (samplingOrder == 1) {
                         hvdb::GridResampleToMatchOp<openvdb::tools::BoxSampler> op(outGrid);
-                        GEOvdbProcessTypedGrid(*vdb, op);
+                        GEOvdbProcessTypedGridTopology(*vdb, op);
                     } else if (samplingOrder == 2) {
                         hvdb::GridResampleToMatchOp<openvdb::tools::QuadraticSampler> op(outGrid);
-                        GEOvdbProcessTypedGrid(*vdb, op);
+                        GEOvdbProcessTypedGridTopology(*vdb, op);
                     }
                 }
 
@@ -444,14 +480,21 @@ SOP_OpenVDB_Resample::cookMySop(OP_Context& context)
 
                     if (samplingOrder == 0) {
                         hvdb::GridTransformOp<openvdb::tools::PointSampler> op(outGrid, xform);
-                        GEOvdbProcessTypedGrid(*vdb, op);
+                        GEOvdbProcessTypedGridTopology(*vdb, op);
                     } else if (samplingOrder == 1) {
                         hvdb::GridTransformOp<openvdb::tools::BoxSampler> op(outGrid, xform);
-                        GEOvdbProcessTypedGrid(*vdb, op);
+                        GEOvdbProcessTypedGridTopology(*vdb, op);
                     } else if (samplingOrder == 2) {
                         hvdb::GridTransformOp<openvdb::tools::QuadraticSampler> op(outGrid, xform);
-                        GEOvdbProcessTypedGrid(*vdb, op);
+                        GEOvdbProcessTypedGridTopology(*vdb, op);
                     }
+                }
+
+                if (xformVec && outGrid->getVectorType() != openvdb::VEC_INVARIANT) {
+                    // If (and only if) the grid is vector-valued, apply the transform
+                    // to each voxel's value.
+                    VecXformOp op(xform.getTransform());
+                    UTvdbProcessTypedGridVec3(valueType, *outGrid, op);
                 }
             }
 

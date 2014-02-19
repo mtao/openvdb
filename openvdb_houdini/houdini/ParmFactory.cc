@@ -374,7 +374,7 @@ ParmFactory::setSpareData(const std::map<std::string, std::string>& items)
 {
     typedef std::map<std::string, std::string> StringMap;
     if (!items.empty()) {
-        PRM_SpareData* data = new PRM_SpareData;
+        PRM_SpareData* data = new PRM_SpareData();
         for (StringMap::const_iterator i = items.begin(), e = items.end(); i != e; ++i) {
             data->addTokenValue(i->first.c_str(), i->second.c_str());
         }
@@ -398,6 +398,12 @@ ParmFactory::setVectorSize(int n)                   { mImpl->vectorSize = n; ret
 PRM_Template
 ParmFactory::get() const
 {
+#ifdef SESI_OPENVDB
+    // Help is maintained separately within Houdini
+    const char *helpText = NULL;
+#else
+    const char *helpText = mImpl->helpText;
+#endif
     if (mImpl->multiType != PRM_MULTITYPE_NONE) {
         return PRM_Template(
             mImpl->multiType,
@@ -407,7 +413,7 @@ ParmFactory::get() const
             const_cast<PRM_Default*>(mImpl->defaults),
             const_cast<PRM_Range*>(mImpl->range),
             const_cast<PRM_SpareData*>(mImpl->spareData),
-            mImpl->helpText,
+            helpText,
             const_cast<PRM_ConditionalBase*>(mImpl->conditional));
     } else {
         return PRM_Template(
@@ -421,7 +427,7 @@ ParmFactory::get() const
             mImpl->callbackFunc,
             const_cast<PRM_SpareData*>(mImpl->spareData),
             mImpl->parmGroup,
-            mImpl->helpText,
+            helpText,
             const_cast<PRM_ConditionalBase*>(mImpl->conditional));
     }
 }
@@ -734,7 +740,17 @@ DWAOpPolicy::getHelpURL(const OpFactory& factory)
 ////////////////////////////////////////
 
 
+#if (UT_VERSION_INT >= 0x0d000000) // 13.0.0 or later
+
+const PRM_ChoiceList PrimGroupMenu = SOP_Node::primGroupMenu;
+
+#else // earlier than 13.0.0
+
 namespace {
+
+// Extended group name drop-down menu incorporating @c "@<attr>=<value>" syntax
+// (this functionality was added to SOP_Node::primGroupMenu some time ago,
+// possibly as early as Houdini 12.5)
 
 inline int
 lookupGroupInput(const PRM_SpareData *spare)
@@ -890,13 +906,13 @@ sopBuildGridMenu(void *data, PRM_Name *menuEntries, int themenusize,
 } // unnamed namespace
 
 
-/// @brief Extended group name drop-down menu incorporating @c "@<attr>=<value>" syntax
-/// @todo Remove this once it becomes a native menu type (expected in Houdini 12.5).
 #ifdef _MSC_VER
 OPENVDB_HOUDINI_API const PRM_ChoiceList PrimGroupMenu(PRM_CHOICELIST_TOGGLE, sopBuildGridMenu);
 #else
 const PRM_ChoiceList PrimGroupMenu(PRM_CHOICELIST_TOGGLE, sopBuildGridMenu);
 #endif
+
+#endif // earlier than 13.0.0
 
 
 ////////////////////////////////////////

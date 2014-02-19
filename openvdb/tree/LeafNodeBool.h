@@ -160,6 +160,8 @@ public:
     Index64 offVoxelCount() const { return mValueMask.countOff(); }
     Index64 onLeafVoxelCount() const { return onVoxelCount(); }
     Index64 offLeafVoxelCount() const { return offVoxelCount(); }
+    static Index64 onTileCount()  { return 0; }
+    static Index64 offTileCount() { return 0; }
 
     /// Return @c true if this node has no active voxels.
     bool isEmpty() const { return mValueMask.isOff(); }
@@ -169,9 +171,11 @@ public:
     /// Return the memory in bytes occupied by this node.
     Index64 memUsage() const;
 
-    /// Expand the specified bbox so it includes the active voxels of
-    /// this leaf node.
-    void evalActiveVoxelBoundingBox(CoordBBox& bbox) const;
+    /// Expand the given bounding box so that it includes this leaf node's active voxels.
+    /// If visitVoxels is false this LeafNode will be approximated as dense, i.e. with all
+    /// voxels active. Else the individual active voxels are visited to produce a tight bbox.
+    void evalActiveBoundingBox(CoordBBox&, bool visitVoxels = true) const;
+    OPENVDB_DEPRECATED void evalActiveVoxelBoundingBox(CoordBBox& bbox) const;
 
     /// @brief Return the bounding box of this node, i.e., the full index space
     /// spanned by this leaf node.
@@ -189,13 +193,13 @@ public:
     void getOrigin(Int32& x, Int32& y, Int32& z) const { mOrigin.asXYZ(x, y, z); }
     //@}
 
-    /// Return the linear table offset of the given coordinates.
-    static Index coord2offset(const Coord& xyz);
+    /// Return the linear table offset of the given global or local coordinates.
+    static Index coordToOffset(const Coord& xyz);
     /// @brief Return the local coordinates for a linear table offset,
     /// where offset 0 has coordinates (0, 0, 0).
-    static Coord offset2coord(Index n);
+    static Coord offsetToLocalCoord(Index n);
     /// Return the global coordinates for a linear table offset.
-    Coord offset2globalCoord(Index n) const;
+    Coord offsetToGlobalCoord(Index n) const;
 
     /// Return a string representation of this node.
     std::string str() const;
@@ -258,7 +262,7 @@ public:
     void setValueOnly(Index offset, bool val) { assert(offset<SIZE); mBuffer.setValue(offset,val); }
 
     /// Mark the voxel at the given coordinates as inactive but don't change its value.
-    void setValueOff(const Coord& xyz) { mValueMask.setOff(this->coord2offset(xyz)); }
+    void setValueOff(const Coord& xyz) { mValueMask.setOff(this->coordToOffset(xyz)); }
     /// Mark the voxel at the given offset as inactive but don't change its value.
     void setValueOff(Index offset) { assert(offset < SIZE); mValueMask.setOff(offset); }
 
@@ -268,7 +272,7 @@ public:
     void setValueOff(Index offset, bool val);
 
     /// Mark the voxel at the given coordinates as active but don't change its value.
-    void setValueOn(const Coord& xyz) { mValueMask.setOn(this->coord2offset(xyz)); }
+    void setValueOn(const Coord& xyz) { mValueMask.setOn(this->coordToOffset(xyz)); }
     /// Mark the voxel at the given offset as active but don't change its value.
     void setValueOn(Index offset) { assert(offset < SIZE); mValueMask.setOn(offset); }
 
@@ -279,6 +283,10 @@ public:
     /// Set the value of the voxel at the given offset and mark the voxel as active.
     void setValueOn(Index offset, bool val);
 
+    /// @brief Apply a functor to the value of the voxel at the given offset
+    /// and mark the voxel as active.
+    template<typename ModifyOp>
+    void modifyValue(Index offset, const ModifyOp& op);
     /// @brief Apply a functor to the value of the voxel at the given coordinates
     /// and mark the voxel as active.
     template<typename ModifyOp>
@@ -294,7 +302,7 @@ public:
     void setValuesOff() { mValueMask.setOff(); }
 
     /// Return @c true if the voxel at the given coordinates is active.
-    bool isValueOn(const Coord& xyz) const { return mValueMask.isOn(this->coord2offset(xyz)); }
+    bool isValueOn(const Coord& xyz) const { return mValueMask.isOn(this->coordToOffset(xyz)); }
     /// Return @c true if the voxel at the given offset is active.
     bool isValueOn(Index offset) const { assert(offset < SIZE); return mValueMask.isOn(offset); }
 
@@ -462,8 +470,8 @@ public:
 
     /// @brief Difference this node's set of active values with the active values
     /// of the other node, whose @c ValueType may be different. So a
-    /// resulting voxel will be active only if both of the original
-    /// voxel is active in this LeafNode and inactive in the other LeafNode.
+    /// resulting voxel will be active only if the original voxel is
+    /// active in this LeafNode and inactive in the other LeafNode.
     ///
     /// @details The last dummy argument is required to match the signature
     /// for InternalNode::topologyDifference.
@@ -589,6 +597,13 @@ protected:
         void setItem(Index pos, bool value) const { this->parent().setValueOnly(pos, value); }
         // Note: setValue() can't be called on const iterators.
         void setValue(bool value) const { this->setItem(this->pos(), value); }
+
+        // Note: modifyItem() can't be called on const iterators.
+        template<typename ModifyOp>
+        void modifyItem(Index n, const ModifyOp& op) const { this->parent().modifyValue(n, op); }
+        // Note: modifyValue() can't be called on const iterators.
+        template<typename ModifyOp>
+        void modifyValue(const ModifyOp& op) const { this->modifyItem(this->pos(), op); }
     };
 
     /// Leaf nodes have no children, so their child iterators have no get/set accessors.
@@ -626,11 +641,11 @@ protected:
     };
 
 public:
-    typedef ValueIter<MaskOnIter, LeafNode, bool>                 ValueOnIter;
+    typedef ValueIter<MaskOnIter, LeafNode, const bool>           ValueOnIter;
     typedef ValueIter<MaskOnIter, const LeafNode, const bool>     ValueOnCIter;
-    typedef ValueIter<MaskOffIter, LeafNode, bool>                ValueOffIter;
+    typedef ValueIter<MaskOffIter, LeafNode, const bool>          ValueOffIter;
     typedef ValueIter<MaskOffIter, const LeafNode, const bool>    ValueOffCIter;
-    typedef ValueIter<MaskDenseIter, LeafNode, bool>              ValueAllIter;
+    typedef ValueIter<MaskDenseIter, LeafNode, const bool>        ValueAllIter;
     typedef ValueIter<MaskDenseIter, const LeafNode, const bool>  ValueAllCIter;
     typedef ChildIter<MaskOnIter, LeafNode>                       ChildOnIter;
     typedef ChildIter<MaskOnIter, const LeafNode>                 ChildOnCIter;
@@ -745,9 +760,6 @@ private:
     friend class IteratorBase<MaskDenseIter, LeafNode>;
     //@}
 
-    // Disallow copying.
-    LeafNode& operator=(const LeafNode&);
-
 }; // class LeafNode<bool>
 
 
@@ -857,6 +869,22 @@ LeafNode<bool, Log2Dim>::evalActiveVoxelBoundingBox(CoordBBox& bbox) const
     }
 }
 
+template<Index Log2Dim>
+inline void
+LeafNode<bool, Log2Dim>::evalActiveBoundingBox(CoordBBox& bbox, bool visitVoxels) const
+{
+    CoordBBox this_bbox = this->getNodeBoundingBox();
+    if (bbox.isInside(this_bbox)) return;//this LeafNode is already enclosed in the bbox
+    if (ValueOnCIter iter = this->cbeginValueOn()) {//any active values?
+        if (visitVoxels) {//use voxel granularity?
+            this_bbox.reset();
+            for(; iter; ++iter) this_bbox.expand(this->offsetToLocalCoord(iter.pos()));
+            this_bbox.translate(this->origin());
+        }
+        bbox.expand(this_bbox);
+    }
+}
+
 
 template<Index Log2Dim>
 template<typename OtherType, Index OtherLog2Dim>
@@ -884,16 +912,18 @@ LeafNode<bool, Log2Dim>::str() const
 
 template<Index Log2Dim>
 inline Index
-LeafNode<bool, Log2Dim>::coord2offset(const Coord& xyz)
+LeafNode<bool, Log2Dim>::coordToOffset(const Coord& xyz)
 {
-    assert ((xyz[0] & DIM-1u) < DIM && (xyz[1] & DIM-1u) < DIM && (xyz[2] & DIM-1u) < DIM);
-    return ((xyz[0] & DIM-1u) << 2*Log2Dim) + ((xyz[1] & DIM-1u) << Log2Dim) + (xyz[2] & DIM-1u);
+    assert ((xyz[0] & (DIM-1u)) < DIM && (xyz[1] & (DIM-1u)) < DIM && (xyz[2] & (DIM-1u)) < DIM);
+    return ((xyz[0] & (DIM-1u)) << 2*Log2Dim)
+         + ((xyz[1] & (DIM-1u)) << Log2Dim)
+         +  (xyz[2] & (DIM-1u));
 }
 
 
 template<Index Log2Dim>
 inline Coord
-LeafNode<bool, Log2Dim>::offset2coord(Index n)
+LeafNode<bool, Log2Dim>::offsetToLocalCoord(Index n)
 {
     assert(n < (1 << 3*Log2Dim));
     Coord xyz;
@@ -907,9 +937,9 @@ LeafNode<bool, Log2Dim>::offset2coord(Index n)
 
 template<Index Log2Dim>
 inline Coord
-LeafNode<bool, Log2Dim>::offset2globalCoord(Index n) const
+LeafNode<bool, Log2Dim>::offsetToGlobalCoord(Index n) const
 {
-    return (this->offset2coord(n) + this->origin());
+    return (this->offsetToLocalCoord(n) + this->origin());
 }
 
 
@@ -1012,7 +1042,9 @@ template<Index Log2Dim>
 inline bool
 LeafNode<bool, Log2Dim>::isConstant(bool& constValue, bool& state, bool tolerance) const
 {
-    if (!(mValueMask.isOn() || mValueMask.isOff())) return false;
+    state = mValueMask.isOn();
+
+    if (!(state || mValueMask.isOff())) return false;
 
     // Note: if tolerance is true (i.e., 1), then all boolean values compare equal.
     if (!tolerance && !(mBuffer.mData.isOn() || mBuffer.mData.isOff())) return false;
@@ -1031,7 +1063,7 @@ inline void
 LeafNode<bool, Log2Dim>::addTile(Index level, const Coord& xyz, bool val, bool active)
 {
     assert(level == 0);
-    this->addTile(this->coord2offset(xyz), val, active);
+    this->addTile(this->coordToOffset(xyz), val, active);
 }
 
 template<Index Log2Dim>
@@ -1061,7 +1093,7 @@ inline const bool&
 LeafNode<bool, Log2Dim>::getValue(const Coord& xyz) const
 {
     // This *CANNOT* use operator ? because Visual C++
-    if (mBuffer.mData.isOn(this->coord2offset(xyz))) return sOn; else return sOff;
+    if (mBuffer.mData.isOn(this->coordToOffset(xyz))) return sOn; else return sOff;
 }
 
 
@@ -1079,7 +1111,7 @@ template<Index Log2Dim>
 inline bool
 LeafNode<bool, Log2Dim>::probeValue(const Coord& xyz, bool& val) const
 {
-    const Index offset = this->coord2offset(xyz);
+    const Index offset = this->coordToOffset(xyz);
     val = mBuffer.mData.isOn(offset);
     return mValueMask.isOn(offset);
 }
@@ -1089,7 +1121,7 @@ template<Index Log2Dim>
 inline void
 LeafNode<bool, Log2Dim>::setValueOn(const Coord& xyz, bool val)
 {
-    this->setValueOn(this->coord2offset(xyz), val);
+    this->setValueOn(this->coordToOffset(xyz), val);
 }
 
 
@@ -1107,7 +1139,7 @@ template<Index Log2Dim>
 inline void
 LeafNode<bool, Log2Dim>::setValueOnly(const Coord& xyz, bool val)
 {
-    this->setValueOnly(this->coord2offset(xyz), val);
+    this->setValueOnly(this->coordToOffset(xyz), val);
 }
 
 
@@ -1115,7 +1147,7 @@ template<Index Log2Dim>
 inline void
 LeafNode<bool, Log2Dim>::setActiveState(const Coord& xyz, bool on)
 {
-    mValueMask.set(this->coord2offset(xyz), on);
+    mValueMask.set(this->coordToOffset(xyz), on);
 }
 
 
@@ -1123,7 +1155,7 @@ template<Index Log2Dim>
 inline void
 LeafNode<bool, Log2Dim>::setValueOff(const Coord& xyz, bool val)
 {
-    this->setValueOff(this->coord2offset(xyz), val);
+    this->setValueOff(this->coordToOffset(xyz), val);
 }
 
 
@@ -1140,9 +1172,8 @@ LeafNode<bool, Log2Dim>::setValueOff(Index offset, bool val)
 template<Index Log2Dim>
 template<typename ModifyOp>
 inline void
-LeafNode<bool, Log2Dim>::modifyValue(const Coord& xyz, const ModifyOp& op)
+LeafNode<bool, Log2Dim>::modifyValue(Index offset, const ModifyOp& op)
 {
-    const Index offset = this->coord2offset(xyz);
     bool val = mBuffer.mData.isOn(offset);
     op(val);
     mBuffer.mData.set(offset, val);
@@ -1153,9 +1184,18 @@ LeafNode<bool, Log2Dim>::modifyValue(const Coord& xyz, const ModifyOp& op)
 template<Index Log2Dim>
 template<typename ModifyOp>
 inline void
+LeafNode<bool, Log2Dim>::modifyValue(const Coord& xyz, const ModifyOp& op)
+{
+    this->modifyValue(this->coordToOffset(xyz), op);
+}
+
+
+template<Index Log2Dim>
+template<typename ModifyOp>
+inline void
 LeafNode<bool, Log2Dim>::modifyValueAndActiveState(const Coord& xyz, const ModifyOp& op)
 {
-    const Index offset = this->coord2offset(xyz);
+    const Index offset = this->coordToOffset(xyz);
     bool val = mBuffer.mData.isOn(offset), state = mValueMask.isOn(offset);
     op(val, state);
     mBuffer.mData.set(offset, val);
@@ -1177,6 +1217,9 @@ LeafNode<bool, Log2Dim>::resetBackground(bool oldBackground, bool newBackground)
         mBuffer.mData = (mBuffer.mData & mValueMask) | bgMask;
     }
 }
+
+
+////////////////////////////////////////
 
 
 template<Index Log2Dim>
@@ -1212,6 +1255,9 @@ LeafNode<bool, Log2Dim>::merge(bool tileValue, bool tileActive)
 }
 
 
+////////////////////////////////////////
+
+
 template<Index Log2Dim>
 template<typename OtherType>
 inline void
@@ -1219,6 +1265,7 @@ LeafNode<bool, Log2Dim>::topologyUnion(const LeafNode<OtherType, Log2Dim>& other
 {
     mValueMask |= other.getValueMask();
 }
+
 
 template<Index Log2Dim>
 template<typename OtherType>
@@ -1229,6 +1276,7 @@ LeafNode<bool, Log2Dim>::topologyIntersection(const LeafNode<OtherType, Log2Dim>
     mValueMask &= other.getValueMask();
 }
 
+
 template<Index Log2Dim>
 template<typename OtherType>
 inline void
@@ -1238,16 +1286,20 @@ LeafNode<bool, Log2Dim>::topologyDifference(const LeafNode<OtherType, Log2Dim>& 
     mValueMask &= !other.getValueMask();
 }
 
+
+////////////////////////////////////////
+
+
 template<Index Log2Dim>
 inline void
 LeafNode<bool, Log2Dim>::fill(const CoordBBox& bbox, bool value, bool active)
 {
     for (Int32 x = bbox.min().x(); x <= bbox.max().x(); ++x) {
-        const Index offsetX = (x&DIM-1u)<<2*Log2Dim;
+        const Index offsetX = (x & (DIM-1u))<<2*Log2Dim;
         for (Int32 y = bbox.min().y(); y <= bbox.max().y(); ++y) {
-            const Index offsetXY = offsetX + ((y&DIM-1u)<<  Log2Dim);
+            const Index offsetXY = offsetX + ((y & (DIM-1u))<<  Log2Dim);
             for (Int32 z = bbox.min().z(); z <= bbox.max().z(); ++z) {
-                const Index offset = offsetXY + (z&DIM-1u);
+                const Index offset = offsetXY + (z & (DIM-1u));
                 mValueMask.set(offset, active);
                 mBuffer.mData.set(offset, value);
             }
@@ -1279,18 +1331,20 @@ template<typename DenseT>
 inline void
 LeafNode<bool, Log2Dim>::copyToDense(const CoordBBox& bbox, DenseT& dense) const
 {
-    const size_t xStride = dense.xStride(), yStride = dense.yStride();// zStride=1
+    typedef typename DenseT::ValueType DenseValueType;
+
+    const size_t xStride = dense.xStride(), yStride = dense.yStride(), zStride = dense.zStride();
     const Coord& min = dense.bbox().min();
-    bool*       t0 = dense.data() + bbox.min()[2]-min[2];//target array
-    const Int32 n0 = bbox.min()[2]&DIM-1u;
-    for (Int32 x = bbox.min()[0], ex=bbox.max()[0]+1; x<ex; ++x) {
-        bool*       t1 = t0 + xStride*(x-min[0]);
-        const Int32 n1 = n0 + ((x&DIM-1u)<<2*LOG2DIM);
-        for (Int32 y = bbox.min()[1], ey=bbox.max()[1]+1; y<ey; ++y) {
-            bool* t2 = t1 + yStride*(y-min[1]);
-            Int32 n2 = n1 + ((y&DIM-1u)<<LOG2DIM) ;
-            for (Int32 z = bbox.min()[2], ez=bbox.max()[2]+1; z<ez ; ++z) {
-                *t2++ = mBuffer.mData.isOn(n2++);
+    DenseValueType* t0 = dense.data() + zStride * (bbox.min()[2] - min[2]); // target array
+    const Int32 n0 = bbox.min()[2] & (DIM-1u);
+    for (Int32 x = bbox.min()[0], ex = bbox.max()[0] + 1; x < ex; ++x) {
+        DenseValueType* t1 = t0 + xStride * (x - min[0]);
+        const Int32 n1 = n0 + ((x & (DIM-1u)) << 2*LOG2DIM);
+        for (Int32 y = bbox.min()[1], ey = bbox.max()[1] + 1; y < ey; ++y) {
+            DenseValueType* t2 = t1 + yStride * (y - min[1]);
+            Int32 n2 = n1 + ((y & (DIM-1u)) << LOG2DIM);
+            for (Int32 z = bbox.min()[2], ez = bbox.max()[2] + 1; z < ez; ++z, t2 += zStride) {
+                *t2 = DenseValueType(mBuffer.mData.isOn(n2++));
             }
         }
     }
@@ -1303,24 +1357,26 @@ inline void
 LeafNode<bool, Log2Dim>::copyFromDense(const CoordBBox& bbox, const DenseT& dense,
                                        bool background, bool tolerance)
 {
-    const size_t xStride = dense.xStride(), yStride = dense.yStride();// zStride=1
+    typedef typename DenseT::ValueType DenseValueType;
+
+    const size_t xStride = dense.xStride(), yStride = dense.yStride(), zStride = dense.zStride();
     const Coord& min = dense.bbox().min();
-    const bool* s0 = dense.data() + bbox.min()[2]-min[2];//source
-    const Int32 n0 = bbox.min()[2]&DIM-1u;
-    for (Int32 x = bbox.min()[0], ex=bbox.max()[0]+1; x<ex; ++x) {
-        const bool* s1 = s0 + xStride*(x-min[0]);
-        const Int32 n1 = n0 + ((x&DIM-1u)<<2*LOG2DIM);
-        for (Int32 y = bbox.min()[1], ey=bbox.max()[1]+1; y<ey; ++y) {
-            const bool* s2 = s1 + yStride*(y-min[1]);
-            Int32 n2 = n1 + ((y&DIM-1u)<<LOG2DIM);
-            for (Int32 z = bbox.min()[2], ez=bbox.max()[2]+1; z<ez ; ++z, ++n2, ++s2) {
+    const DenseValueType* s0 = dense.data() + zStride * (bbox.min()[2] - min[2]); // source
+    const Int32 n0 = bbox.min()[2] & (DIM-1u);
+    for (Int32 x = bbox.min()[0], ex = bbox.max()[0] + 1; x < ex; ++x) {
+        const DenseValueType* s1 = s0 + xStride * (x - min[0]);
+        const Int32 n1 = n0 + ((x & (DIM-1u)) << 2*LOG2DIM);
+        for (Int32 y = bbox.min()[1], ey = bbox.max()[1] + 1; y < ey; ++y) {
+            const DenseValueType* s2 = s1 + yStride * (y - min[1]);
+            Int32 n2 = n1 + ((y & (DIM-1u)) << LOG2DIM);
+            for (Int32 z = bbox.min()[2], ez = bbox.max()[2]+1; z < ez; ++z, ++n2, s2 += zStride) {
                 // Note: if tolerance is true (i.e., 1), then all boolean values compare equal.
-                if (tolerance || background == *s2) {
+                if (tolerance || background == bool(*s2)) {
                     mValueMask.setOff(n2);
                     mBuffer.mData.set(n2, background);
                 } else {
                     mValueMask.setOn(n2);
-                    mBuffer.mData.set(n2, *s2);
+                    mBuffer.mData.set(n2, bool(*s2));
                 }
             }
         }
@@ -1441,9 +1497,9 @@ LeafNode<bool, Log2Dim>::visitActiveBBox(BBoxOp& op) const
     if (op.template descent<LEVEL>()) {
         for (ValueOnCIter i=this->cbeginValueOn(); i; ++i) {
 #ifdef _MSC_VER
-            op.operator()<LEVEL>(CoordBBox(i.getCoord(),1));
+            op.operator()<LEVEL>(CoordBBox::createCube(i.getCoord(), 1));
 #else
-            op.template operator()<LEVEL>(CoordBBox(i.getCoord(),1));
+            op.template operator()<LEVEL>(CoordBBox::createCube(i.getCoord(), 1));
 #endif
         }
     } else {

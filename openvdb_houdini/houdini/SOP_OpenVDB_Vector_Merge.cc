@@ -41,6 +41,7 @@
 #include <houdini_utils/ParmFactory.h>
 #include <openvdb_houdini/Utils.h>
 #include <openvdb_houdini/SOP_NodeVDB.h>
+#include <openvdb/tools/ValueTransformer.h> // for tools::foreach()
 #include <UT/UT_Interrupt.h>
 #include <UT/UT_String.h>
 #include <boost/bind.hpp>
@@ -70,6 +71,7 @@ public:
     static OP_Node* factory(OP_Network*, const char* name, OP_Operator*);
 
 protected:
+    virtual bool updateParmsFlags();
     virtual OP_ERROR cookMySop(OP_Context&);
 
     static void addWarningMessage(SOP_OpenVDB_Vector_Merge* self, const char* msg)
@@ -116,7 +118,11 @@ newSopOperator(OP_OperatorTable* table)
 
     // Use X name
     parms.add(hutil::ParmFactory(PRM_TOGGLE, "usexname",  "Use Basename of X VDB")
+#ifndef SESI_OPENVDB
         .setDefault(PRMzeroDefaults));
+#else
+        .setDefault(PRMoneDefaults));
+#endif
 
     // Output vector grid name
     parms.add(hutil::ParmFactory(PRM_STRING, "merge_name",  "Merged VDB Name")
@@ -126,17 +132,28 @@ newSopOperator(OP_OperatorTable* table)
             "Include '#' in the name to number the output grids\n"
             "in the order that they are processed."));
 
+    {
+        // Output grid's vector type (invariant, covariant, etc.)
+        std::vector<std::string> items;
+        for (int i = 0; i < openvdb::NUM_VEC_TYPES ; ++i) {
+            items.push_back(openvdb::GridBase::vecTypeToString(openvdb::VecType(i)));
+            items.push_back(openvdb::GridBase::vecTypeExamples(openvdb::VecType(i)));
+        }
+        parms.add(hutil::ParmFactory(PRM_ORD, "vectype", "Vector Type")
+            .setDefault(PRMzeroDefaults)
+            .setChoiceListItems(PRM_CHOICELIST_SINGLE, items));
+    }
+
 #if HAVE_MERGE_GROUP
+    // Toggle to enable/disable grouping
+    parms.add(hutil::ParmFactory(PRM_TOGGLE, "enable_grouping", "")
+        .setDefault(PRMoneDefaults)
+        .setTypeExtended(PRM_TYPE_TOGGLE_JOIN)
+        .setHelpText("If disabled, don't group merged vector grids."));
+
     // Output vector grid group name
     parms.add(hutil::ParmFactory(PRM_STRING, "group",  "Merge Group")
-        .setTypeExtended(PRM_TYPE_JOIN_PAIR)
         .setHelpText("Specify a name for the output group of merged vector grids."));
-
-    // Toggle to enable/disable grouping
-    parms.add(hutil::ParmFactory(PRM_TOGGLE | PRM_Type(PRM_Type::PRM_INTERFACE_LABEL_NONE),
-            "enable_grouping", "")
-        .setDefault(PRMoneDefaults)
-        .setHelpText("If disabled, don't group merged vector grids."));
 #endif
 
     // Toggle to keep/remove source grids
@@ -154,13 +171,28 @@ newSopOperator(OP_OperatorTable* table)
             "inactive voxels as active background voxels wherever\n"
             "corresponding input voxels have different active states."));
 
+#ifndef SESI_OPENVDB
     // Verbosity toggle
     parms.add(hutil::ParmFactory(PRM_TOGGLE, "verbose", "Verbose"));
+#endif
 
     // Register this operator.
     hvdb::OpenVDBOpFactory("OpenVDB Vector Merge",
         SOP_OpenVDB_Vector_Merge::factory, parms, *table)
         .addInput("Scalar VDBs to merge into vector");
+}
+
+
+bool
+SOP_OpenVDB_Vector_Merge::updateParmsFlags()
+{
+    bool changed = false;
+
+#if HAVE_MERGE_GROUP
+    changed |= enableParm("group", evalInt("enable_grouping", 0, 0) != 0);
+#endif
+
+    return changed;
 }
 
 
@@ -198,6 +230,151 @@ template<typename T> struct VecValueTypeMap { typedef T Type; static const bool 
 //template<> struct VecValueTypeMap<uint64_t> {
 //    typedef int32_t Type; static const bool Changed = true;
 //};
+
+
+struct InterruptException {};
+
+
+// Functor to merge inactive tiles and voxels from up to three
+// scalar-valued trees into one vector-valued tree
+template<typename VectorTreeT, typename ScalarTreeT>
+class MergeActiveOp
+{
+public:
+    typedef typename VectorTreeT::ValueType  VectorValueT;
+    typedef typename ScalarTreeT::ValueType  ScalarValueT;
+    typedef typename openvdb::tree::ValueAccessor<const ScalarTreeT>  ScalarAccessor;
+
+    MergeActiveOp(const ScalarTreeT* xTree, const ScalarTreeT* yTree, const ScalarTreeT* zTree,
+        UT_Interrupt* interrupt)
+        : mDummyTree(new ScalarTreeT)
+        , mXAcc(xTree ? *xTree : *mDummyTree)
+        , mYAcc(yTree ? *yTree : *mDummyTree)
+        , mZAcc(zTree ? *zTree : *mDummyTree)
+        , mInterrupt(interrupt)
+    {
+        /// @todo Consider initializing x, y and z dummy trees with background values
+        /// taken from the vector tree.  Currently, though, missing components are always
+        /// initialized to zero.
+
+        // Note that copies of this op share the original dummy tree.
+        // That's OK, since this op doesn't modify the dummy tree.
+    }
+
+    MergeActiveOp(const MergeActiveOp& other)
+        : mDummyTree(other.mDummyTree)
+        , mXAcc(other.mXAcc)
+        , mYAcc(other.mYAcc)
+        , mZAcc(other.mZAcc)
+        , mInterrupt(other.mInterrupt)
+    {
+        if (mInterrupt && mInterrupt->opInterrupt()) { throw InterruptException(); }
+    }
+
+    // Given an active tile or voxel in the vector tree, set its value based on
+    // the values of corresponding tiles or voxels in the scalar trees.
+    void operator()(const typename VectorTreeT::ValueOnIter& it) const
+    {
+        const openvdb::Coord xyz = it.getCoord();
+        ScalarValueT
+            xval = mXAcc.getValue(xyz),
+            yval = mYAcc.getValue(xyz),
+            zval = mZAcc.getValue(xyz);
+        it.setValue(VectorValueT(xval, yval, zval));
+    }
+
+private:
+    boost::shared_ptr<const ScalarTreeT> mDummyTree;
+    ScalarAccessor mXAcc, mYAcc, mZAcc;
+    UT_Interrupt* mInterrupt;
+}; // MergeActiveOp
+
+
+// Functor to merge inactive tiles and voxels from up to three
+// scalar-valued trees into one vector-valued tree
+template<typename VectorTreeT, typename ScalarTreeT>
+struct MergeInactiveOp
+{
+    typedef typename VectorTreeT::ValueType    VectorValueT;
+    typedef typename VectorValueT::value_type  VectorElemT;
+    typedef typename ScalarTreeT::ValueType    ScalarValueT;
+    typedef typename openvdb::tree::ValueAccessor<VectorTreeT>        VectorAccessor;
+    typedef typename openvdb::tree::ValueAccessor<const ScalarTreeT>  ScalarAccessor;
+
+    MergeInactiveOp(const ScalarTreeT* xTree, const ScalarTreeT* yTree, const ScalarTreeT* zTree,
+        VectorTreeT& vecTree, UT_Interrupt* interrupt)
+        : mDummyTree(new ScalarTreeT)
+        , mXAcc(xTree ? *xTree : *mDummyTree)
+        , mYAcc(yTree ? *yTree : *mDummyTree)
+        , mZAcc(zTree ? *zTree : *mDummyTree)
+        , mVecAcc(vecTree)
+        , mInterrupt(interrupt)
+    {
+        /// @todo Consider initializing x, y and z dummy trees with background values
+        /// taken from the vector tree.  Currently, though, missing components are always
+        /// initialized to zero.
+
+        // Note that copies of this op share the original dummy tree.
+        // That's OK, since this op doesn't modify the dummy tree.
+    }
+
+    MergeInactiveOp(const MergeInactiveOp& other)
+        : mDummyTree(other.mDummyTree)
+        , mXAcc(other.mXAcc)
+        , mYAcc(other.mYAcc)
+        , mZAcc(other.mZAcc)
+        , mVecAcc(other.mVecAcc)
+        , mInterrupt(other.mInterrupt)
+    {
+        if (mInterrupt && mInterrupt->opInterrupt()) { throw InterruptException(); }
+    }
+
+    // Given an inactive tile or voxel in a scalar tree, activate the corresponding
+    // tile or voxel in the vector tree.
+    void operator()(const typename ScalarTreeT::ValueOffCIter& it) const
+    {
+        // Skip background tiles and voxels, since the output vector tree
+        // is assumed to be initialized with the correct background.
+        if (openvdb::math::isExactlyEqual(it.getValue(), it.getTree()->background())) return;
+
+        const openvdb::Coord& xyz = it.getCoord();
+        if (it.isVoxelValue()) {
+            mVecAcc.setActiveState(xyz, true);
+        } else {
+            // Because the vector tree was constructed with the same node configuration
+            // as the scalar trees, tiles can be transferred directly between the two.
+            mVecAcc.addTile(it.getLevel(), xyz,
+                openvdb::zeroVal<VectorValueT>(), /*active=*/true);
+        }
+    }
+
+    // Given an active tile or voxel in the vector tree, set its value based on
+    // the values of corresponding tiles or voxels in the scalar trees.
+    void operator()(const typename VectorTreeT::ValueOnIter& it) const
+    {
+        const openvdb::Coord xyz = it.getCoord();
+        ScalarValueT
+            xval = mXAcc.getValue(xyz),
+            yval = mYAcc.getValue(xyz),
+            zval = mZAcc.getValue(xyz);
+        it.setValue(VectorValueT(xval, yval, zval));
+    }
+
+    // Deactivate all voxels in a leaf node of the vector tree.
+    void operator()(const typename VectorTreeT::LeafIter& it) const
+    {
+        it->setValuesOff();
+    }
+
+private:
+    boost::shared_ptr<const ScalarTreeT> mDummyTree;
+    ScalarAccessor mXAcc, mYAcc, mZAcc;
+    mutable VectorAccessor mVecAcc;
+    UT_Interrupt* mInterrupt;
+}; // MergeInactiveOp
+
+
+////////////////////////////////////////
 
 
 class ScalarGridMerger
@@ -285,53 +462,64 @@ public:
             }
         }
 
-        openvdb::CoordBBox bbox;
-        VecT val;
-        typename VecGridT::Accessor vecAccessor = vecGrid->getAccessor();
-        // For each voxel in each of the input scalar grids (because the input grids
-        // might have voxels set in different locations), set the appropriate
-        // vector component of the corresponding voxel in the output vector grid.
+        if (mCopyInactiveValues) {
+            try {
+                MergeInactiveOp<VecTreeT, ScalarTreeT>
+                    op(inTree[0], inTree[1], inTree[2], vecGrid->tree(), mInterrupt);
+
+                // 1. For each non-background inactive value in each scalar tree,
+                //    activate the corresponding region in the vector tree.
+                for (int i = 0; i < 3; ++i) {
+                    if (mInterrupt && mInterrupt->opInterrupt()) { mOutGrid.reset(); return; }
+                    if (!inTree[i]) continue;
+                    // Because this is a topology-modifying operation, it must be done serially.
+                    openvdb::tools::foreach(inTree[i]->cbeginValueOff(),
+                        op, /*threaded=*/false, /*shareOp=*/false);
+                }
+
+                // 2. For each active value in the vector tree, set v = (x, y, z).
+                openvdb::tools::foreach(vecGrid->beginValueOn(),
+                    op, /*threaded=*/true, /*shareOp=*/false);
+
+                // 3. Deactivate all values in the vector tree, by processing
+                //    leaf nodes in parallel (which is safe) and tiles serially.
+                openvdb::tools::foreach(vecGrid->tree().beginLeaf(), op, /*threaded=*/true);
+                typename VecTreeT::ValueOnIter tileIt = vecGrid->beginValueOn();
+                tileIt.setMaxDepth(tileIt.getLeafDepth() - 1); // skip leaf nodes
+                for (int count = 0; tileIt; ++tileIt, ++count) {
+                    if (count % 100 == 0 && mInterrupt && mInterrupt->opInterrupt()) {
+                        mOutGrid.reset();
+                        return;
+                    }
+                    tileIt.setValueOff();
+                }
+            } catch (InterruptException&) {
+                mOutGrid.reset();
+                return;
+            }
+        }
+
+        // Activate voxels (without setting their values) in the output vector grid so that
+        // its tree topology is the union of the topologies of the input scalar grids.
+        // Transferring voxel values from the scalar grids to the vector grid can then
+        // be done safely from multiple threads.
         for (int i = 0; i < 3; ++i) {
             if (mInterrupt && mInterrupt->opInterrupt()) { mOutGrid.reset(); return; }
             if (!inTree[i]) continue;
-
-            if (mCopyInactiveValues) {
-                typename ScalarTreeT::ValueAllCIter it = inTree[i]->cbeginValueAll();
-                for ( ; it; ++it) {
-                    if (!it.getBoundingBox(bbox)) continue;
-
-                    const bool active = it.isValueOn();
-
-                    // Get the vector value at the current location in
-                    // the output grid and update its ith component.
-                    val = vecAccessor.getValue(bbox.min());
-                    val[i] = it.getValue();
-
-                    if (it.isTileValue()) {
-                        vecGrid->fill(bbox, val, active);
-                    } else { // it.isVoxelValue()
-                        vecAccessor.setValue(bbox.min(), val);
-                        if (!active) vecAccessor.setValueOff(bbox.min());
-                    }
-                }
-            } else {
-                typename ScalarTreeT::ValueOnCIter it = inTree[i]->cbeginValueOn();
-                for ( ; it; ++it) {
-                    if (!it.getBoundingBox(bbox)) continue;
-
-                    // Get the vector value at the current location in
-                    // the output grid and update its ith component.
-                    val = vecAccessor.getValue(bbox.min());
-                    val[i] = it.getValue();
-
-                    if (it.isTileValue()) {
-                        vecGrid->fill(bbox, val);
-                    } else { // it.isVoxelValue()
-                        vecAccessor.setValueOn(bbox.min(), val);
-                    }
-                }
-            }
+            vecGrid->tree().topologyUnion(*inTree[i]);
         }
+
+        // Set a new value for each active tile or voxel in the output vector grid.
+        try {
+            MergeActiveOp<VecTreeT, ScalarTreeT>
+                op(inTree[0], inTree[1], inTree[2], mInterrupt);
+            openvdb::tools::foreach(vecGrid->beginValueOn(),
+                op, /*threaded=*/true, /*shareOp=*/false);
+        } catch (InterruptException&) {
+            mOutGrid.reset();
+            return;
+        }
+        vecGrid->prune();
     }
 
 private:
@@ -359,10 +547,21 @@ SOP_OpenVDB_Vector_Merge::cookMySop(OP_Context& context)
 
         duplicateSource(0, context);
 
-        const bool
-            copyInactiveValues = evalInt("copyinactive", 0, time),
-            removeSourceGrids = evalInt("remove_sources", 0, time),
-            verbose = evalInt("verbose", 0, time);
+        const bool copyInactiveValues = evalInt("copyinactive", 0, time);
+        const bool removeSourceGrids = evalInt("remove_sources", 0, time);
+#ifndef SESI_OPENVDB
+        const bool verbose = evalInt("verbose", 0, time);
+#else
+        const bool verbose = false;
+#endif
+
+        openvdb::VecType vecType = openvdb::VEC_INVARIANT;
+        {
+            const int vtype = evalInt("vectype", 0, time);
+            if (vtype >= 0 && vtype < openvdb::NUM_VEC_TYPES) {
+                vecType = static_cast<openvdb::VecType>(vtype);
+            }
+        }
 
         // Get the name (or naming pattern) for merged grids.
         UT_String mergeName;
@@ -441,7 +640,8 @@ SOP_OpenVDB_Vector_Merge::cookMySop(OP_Context& context)
             UTvdbProcessTypedGridScalar(UTvdbGetGridType(*nonNullGrid), *nonNullGrid, op);
 
             if (hvdb::GridPtr outGrid = op.getGrid()) {
-                outGrid->insertMeta("name", openvdb::StringMetadata(outGridName));
+                outGrid->setName(outGridName);
+                outGrid->setVectorType(vecType);
 
                 if (verbose) {
                     std::ostringstream ostr;

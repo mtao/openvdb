@@ -56,7 +56,7 @@ public:
 
 protected:
     virtual OP_ERROR cookMySop(OP_Context&);
-    virtual unsigned disableParms();
+    virtual bool updateParmsFlags();
 };
 
 
@@ -213,13 +213,13 @@ SOP_OpenVDB_Read::SOP_OpenVDB_Read(OP_Network* net,
 
 
 // Disable parms in the UI.
-unsigned
-SOP_OpenVDB_Read::disableParms()
+bool
+SOP_OpenVDB_Read::updateParmsFlags()
 {
-    unsigned changed = 0;
+    bool changed = false;
     float t = 0.0;
 
-    changed += enableParm("group", evalInt("enable_grouping", 0, t));
+    changed |= enableParm("group", evalInt("enable_grouping", 0, t));
 
     return changed;
 }
@@ -314,13 +314,9 @@ SOP_OpenVDB_Read::cookMySop(OP_Context& context)
                         }
                     }
                 }
-                // Transfer the grid name from the input grid map to the grid's metadata.
-                grid->removeMeta("name");
-                grid->insertMeta("name", openvdb::StringMetadata(gridName));
 
                 // Add a new VDB primitive for this grid.
                 // Note: this clears the grid's metadata.
-
                 GEO_PrimVDB* vdb = hvdb::createVdbPrimitive(*gdp, grid);
 
                 // Add the primitive to the group.

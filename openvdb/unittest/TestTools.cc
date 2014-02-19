@@ -39,16 +39,19 @@
 #include <openvdb/tools/LevelSetUtil.h>
 #include <openvdb/tools/LevelSetSphere.h>
 #include <openvdb/tools/LevelSetAdvect.h>
+#include <openvdb/tools/LevelSetMeasure.h>
+#include <openvdb/tools/LevelSetMorph.h>
 #include <openvdb/tools/Morphology.h>
 #include <openvdb/tools/PointAdvect.h>
 #include <openvdb/tools/PointScatter.h>
 #include <openvdb/tools/ValueTransformer.h>
+#include <openvdb/tools/VectorTransformer.h>
 #include <openvdb/util/Util.h>
+#include <openvdb/math/Stats.h>
 #include "util.h" // for unittest_util::makeSphere()
 
 #define ASSERT_DOUBLES_EXACTLY_EQUAL(expected, actual) \
     CPPUNIT_ASSERT_DOUBLES_EQUAL((expected), (actual), /*tolerance=*/0.0);
-
 
 class TestTools: public CppUnit::TestFixture
 {
@@ -59,38 +62,85 @@ public:
     CPPUNIT_TEST_SUITE(TestTools);
     CPPUNIT_TEST(testDilateVoxels);
     CPPUNIT_TEST(testErodeVoxels);
+    CPPUNIT_TEST(testActivate);
     CPPUNIT_TEST(testFilter);
     CPPUNIT_TEST(testFloatApply);
     CPPUNIT_TEST(testLevelSetSphere);
     CPPUNIT_TEST(testLevelSetAdvect);
+    CPPUNIT_TEST(testLevelSetMeasure);
+    CPPUNIT_TEST(testLevelSetMorph);
     CPPUNIT_TEST(testMagnitude);
+    CPPUNIT_TEST(testMaskedMagnitude);
     CPPUNIT_TEST(testNormalize);
+    CPPUNIT_TEST(testMaskedNormalize);
     CPPUNIT_TEST(testPointAdvect);
     CPPUNIT_TEST(testPointScatter);
     CPPUNIT_TEST(testTransformValues);
     CPPUNIT_TEST(testVectorApply);
     CPPUNIT_TEST(testAccumulate);
     CPPUNIT_TEST(testUtil);
+    CPPUNIT_TEST(testVectorTransformer);
 
     CPPUNIT_TEST_SUITE_END();
 
     void testDilateVoxels();
     void testErodeVoxels();
+    void testActivate();
     void testFilter();
     void testFloatApply();
     void testLevelSetSphere();
     void testLevelSetAdvect();
+    void testLevelSetMeasure();
+    void testLevelSetMorph();
     void testMagnitude();
+    void testMaskedMagnitude();
     void testNormalize();
+    void testMaskedNormalize();
     void testPointAdvect();
     void testPointScatter();
     void testTransformValues();
     void testVectorApply();
     void testAccumulate();
     void testUtil();
+    void testVectorTransformer();
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION(TestTools);
+
+
+#if 0
+namespace {
+
+// Simple helper class to write out numbered vdbs
+template<typename GridT>
+class FrameWriter
+{
+public:
+    FrameWriter(int version, typename GridT::Ptr grid):
+        mFrame(0), mVersion(version), mGrid(grid)
+    {}
+
+    void operator()(const std::string& name, float time, size_t n)
+    {
+        std::ostringstream ostr;
+        ostr << "/usr/pic1/tmp/" << name << "_" << mVersion << "_" << mFrame << ".vdb";
+        openvdb::io::File file(ostr.str());
+        openvdb::GridPtrVec grids;
+        grids.push_back(mGrid);
+        file.write(grids);
+        std::cerr << "\nWrote \"" << ostr.str() << "\" with time = "
+                  << time << " after CFL-iterations = " << n << std::endl;
+        ++mFrame;
+    }
+
+private:
+    int mFrame, mVersion;
+    typename GridT::Ptr mGrid;
+};
+
+} // unnamed namespace
+#endif
+
 
 void
 TestTools::testDilateVoxels()
@@ -317,10 +367,10 @@ TestTools::testErodeVoxels()
     }
     {
         struct Info {
-            void test(TreeType::Ptr tree) {
-                CPPUNIT_ASSERT_EQUAL(activeVoxelCount, int(tree->activeVoxelCount()));
-                CPPUNIT_ASSERT_EQUAL(leafCount,        int(tree->leafCount()));
-                CPPUNIT_ASSERT_EQUAL(nonLeafCount,     int(tree->nonLeafCount()));
+            void test(TreeType::Ptr aTree) {
+                CPPUNIT_ASSERT_EQUAL(activeVoxelCount, int(aTree->activeVoxelCount()));
+                CPPUNIT_ASSERT_EQUAL(leafCount,        int(aTree->leafCount()));
+                CPPUNIT_ASSERT_EQUAL(nonLeafCount,     int(aTree->nonLeafCount()));
             }
             int activeVoxelCount, leafCount, nonLeafCount;
         };
@@ -397,6 +447,42 @@ TestTools::testErodeVoxels()
     }
 }
 
+
+void
+TestTools::testActivate()
+{
+    using namespace openvdb;
+
+    const Vec3s background(0.0, -1.0, 1.0), foreground(42.0);
+
+    Vec3STree tree(background);
+
+    const CoordBBox bbox1(Coord(-200), Coord(-181)), bbox2(Coord(51), Coord(373));
+
+    // Set some non-background active voxels.
+    tree.fill(bbox1, Vec3s(0.0), /*active=*/true);
+
+    // Mark some background voxels as active.
+    tree.fill(bbox2, background, /*active=*/true);
+    CPPUNIT_ASSERT_EQUAL(bbox2.volume() + bbox1.volume(), tree.activeVoxelCount());
+
+    // Deactivate all voxels with the background value.
+    tools::deactivate(tree, background, /*tolerance=*/Vec3s(1.0e-6));
+    // Verify that there are no longer any active voxels with the background value.
+    CPPUNIT_ASSERT_EQUAL(bbox1.volume(), tree.activeVoxelCount());
+
+    // Set some voxels to the foreground value but leave them inactive.
+    tree.fill(bbox2, foreground, /*active=*/false);
+    // Verify that there are no active voxels with the background value.
+    CPPUNIT_ASSERT_EQUAL(bbox1.volume(), tree.activeVoxelCount());
+
+    // Activate all voxels with the foreground value.
+    tools::activate(tree, foreground);
+    // Verify that the expected number of voxels are active.
+    CPPUNIT_ASSERT_EQUAL(bbox1.volume() + bbox2.volume(), tree.activeVoxelCount());
+}
+
+
 void
 TestTools::testFilter()
 {
@@ -417,7 +503,8 @@ TestTools::testFilter()
         openvdb::FloatTree& tree = grid->tree();
         openvdb::tools::Filter<openvdb::FloatGrid> filter(*grid);
         const float offset = 2.34f;
-        filter.offset(offset, true/*=serial*/);
+        filter.setGrainSize(0);//i.e. disable threading
+        filter.offset(offset);
         for (int x=0; x<dim[0]; ++x) {
             xyz[0]=x;
             for (int y=0; y<dim[1]; ++y) {
@@ -430,6 +517,7 @@ TestTools::testFilter()
                 }
             }
         }
+        filter.setGrainSize(1);//i.e. enable threading
         filter.offset(-offset);//default is multi-threaded
         for (int x=0; x<dim[0]; ++x) {
             xyz[0]=x;
@@ -451,7 +539,7 @@ TestTools::testFilter()
         const int width = 2;
         openvdb::math::DenseStencil<openvdb::FloatGrid> stencil(*referenceGrid, width);
         openvdb::tools::Filter<openvdb::FloatGrid> filter(*filteredGrid);
-        filter.median(width, /*interations=*/1, false/*=serial*/);
+        filter.median(width, /*interations=*/1);
         std::vector<float> tmp;
         for (int x=0; x<dim[0]; ++x) {
             xyz[0]=x;
@@ -487,7 +575,7 @@ TestTools::testFilter()
         const int width = 2;
         openvdb::math::DenseStencil<openvdb::FloatGrid> stencil(*referenceGrid, width);
         openvdb::tools::Filter<openvdb::FloatGrid> filter(*filteredGrid);
-        filter.mean(width,  /*interations=*/1, false/*=serial*/);
+        filter.mean(width,  /*interations=*/1);
         for (int x=0; x<dim[0]; ++x) {
             xyz[0]=x;
             for (int y=0; y<dim[1]; ++y) {
@@ -571,24 +659,6 @@ TestTools::testLevelSetAdvect()
     typedef openvdb::FloatGrid GridT;
     typedef openvdb::Vec3fGrid VectT;
 
-    class FrameWriter {
-    public:
-        FrameWriter(int dim, GridT::Ptr grid) : mFrame(0), mDim(dim), mGrid(grid) {}
-        void operator()(const char* name, float time, size_t n) {
-            std::ostringstream ostr;
-            ostr << "/usr/pic1/tmp/" << name << "_" << mDim << "_" << mFrame << ".vdb";
-            openvdb::io::File file(ostr.str());
-            openvdb::GridPtrVec grids;
-            grids.push_back(mGrid);
-            file.write(grids);
-            std::cerr << "\nWrote \"" << ostr.str() << "\" with time = "
-                      << time << " after CFL-iterations = " << n << std::endl;
-            ++mFrame;
-        }
-    private:
-        int mFrame, mDim;
-        GridT::Ptr mGrid;
-        };
     */
     /*
     {//test tracker
@@ -598,7 +668,7 @@ TestTools::testLevelSetAdvect()
         tracker.setSpatialScheme(openvdb::math::HJWENO5_BIAS);
         tracker.setTemporalScheme(openvdb::math::TVD_RK1);
 
-        FrameWriter fw(dim, grid); fw("Tracker",0, 0);
+        FrameWriter<GridT> fw(dim, grid); fw("Tracker",0, 0);
         //for (float t = 0, dt = 0.005f; !grid->empty() && t < 3.0f; t += dt) {
         //    fw("Enright", t + dt, advect.advect(t, t + dt));
         //}
@@ -621,7 +691,7 @@ TestTools::testLevelSetAdvect()
         advect.setTrackerSpatialScheme(openvdb::math::HJWENO5_BIAS);
         advect.setTrackerTemporalScheme(openvdb::math::TVD_RK1);
 
-        FrameWriter fw(dim, grid); fw("Enright",0, 0);
+        FrameWriter<GridT> fw(dim, grid); fw("Enright",0, 0);
         //for (float t = 0, dt = 0.005f; !grid->empty() && t < 3.0f; t += dt) {
         //    fw("Enright", t + dt, advect.advect(t, t + dt));
         //}
@@ -641,7 +711,7 @@ TestTools::testLevelSetAdvect()
         advect.setSpatialScheme(openvdb::math::HJWENO5_BIAS);
         advect.setTemporalScheme(openvdb::math::TVD_RK2);
 
-        FrameWriter fw(dim, grid); fw("Aligned",0, 0);
+        FrameWriter<GridT> fw(dim, grid); fw("Aligned",0, 0);
         //for (float t = 0, dt = 0.005f; !grid->empty() && t < 3.0f; t += dt) {
         //    fw("Aligned", t + dt, advect.advect(t, t + dt));
         //}
@@ -667,7 +737,7 @@ TestTools::testLevelSetAdvect()
         advect.setSpatialScheme(openvdb::math::HJWENO5_BIAS);
         advect.setTemporalScheme(openvdb::math::TVD_RK2);
 
-        FrameWriter fw(dim, grid); fw("Xformed",0, 0);
+        FrameWriter<GridT> fw(dim, grid); fw("Xformed",0, 0);
         //for (float t = 0, dt = 0.005f; !grid->empty() && t < 3.0f; t += dt) {
         //    fw("Xformed", t + dt, advect.advect(t, t + dt));
         //}
@@ -676,11 +746,264 @@ TestTools::testLevelSetAdvect()
         }
         }
     */
-}
+}//testLevelSetAdvect
 
 
 ////////////////////////////////////////
 
+void
+TestTools::testLevelSetMorph()
+{
+    typedef openvdb::FloatGrid GridT;
+    {//test morphing overlapping but aligned spheres
+        const int dim = 64;
+        const openvdb::Vec3f C1(0.35f, 0.35f, 0.35f), C2(0.4f, 0.4f, 0.4f);
+        const float radius = 0.15f, voxelSize = 1.0f/(dim-1);
+
+        GridT::Ptr source = openvdb::tools::createLevelSetSphere<GridT>(radius, C1, voxelSize);
+        GridT::Ptr target = openvdb::tools::createLevelSetSphere<GridT>(radius, C2, voxelSize);
+
+        typedef openvdb::tools::LevelSetMorphing<GridT>  MorphT;
+        MorphT morph(*source, *target);
+        morph.setSpatialScheme(openvdb::math::HJWENO5_BIAS);
+        morph.setTemporalScheme(openvdb::math::TVD_RK3);
+        morph.setTrackerSpatialScheme(openvdb::math::HJWENO5_BIAS);
+        morph.setTrackerTemporalScheme(openvdb::math::TVD_RK2);
+
+        const std::string name("SphereToSphere");
+        //FrameWriter<GridT> fw(dim, source);
+        //fw(name, 0.0f, 0);
+        //unittest_util::CpuTimer timer;
+        const float tMax =  0.05f/voxelSize;
+        //std::cerr << "\nt-max = " << tMax << std::endl;
+        //timer.start("\nMorphing");
+        for (float t = 0, dt = 0.1f; !source->empty() && t < tMax; t += dt) {
+            morph.advect(t, t + dt);
+            //fw(name, t + dt, morph.advect(t, t + dt));
+        }
+        // timer.stop();
+
+        const float invDx = 1.0f/voxelSize;
+        openvdb::math::Stats s;
+        for (GridT::ValueOnCIter it = source->tree().cbeginValueOn(); it; ++it) {
+            s.add( invDx*(*it - target->tree().getValue(it.getCoord())) );
+        }
+        for (GridT::ValueOnCIter it = target->tree().cbeginValueOn(); it; ++it) {
+            s.add( invDx*(*it - target->tree().getValue(it.getCoord())) );
+        }
+        //s.print("Morph");
+        CPPUNIT_ASSERT_DOUBLES_EQUAL(0.0, s.min(), 0.50);
+        CPPUNIT_ASSERT_DOUBLES_EQUAL(0.0, s.max(), 0.50);
+        CPPUNIT_ASSERT_DOUBLES_EQUAL(0.0, s.avg(), 0.02);
+        /*
+        openvdb::math::Histogram h(s, 30);
+        for (GridT::ValueOnCIter it = source->tree().cbeginValueOn(); it; ++it) {
+            h.add( invDx*(*it - target->tree().getValue(it.getCoord())) );
+        }
+        for (GridT::ValueOnCIter it = target->tree().cbeginValueOn(); it; ++it) {
+            h.add( invDx*(*it - target->tree().getValue(it.getCoord())) );
+        }
+        h.print("Morph");
+        */
+    }
+    /*
+    // Uncomment sections below to run this (very time-consuming) test
+    {//test morphing between the bunny and the buddha models loaded from files
+        unittest_util::CpuTimer timer;
+        openvdb::initialize();//required whenever I/O of OpenVDB files is performed!
+        openvdb::io::File sourceFile("/usr/pic1/Data/OpenVDB/LevelSetModels/bunny.vdb");
+        sourceFile.open();
+        GridT::Ptr source = openvdb::gridPtrCast<GridT>(sourceFile.getGrids()->at(0));
+
+        openvdb::io::File targetFile("/usr/pic1/Data/OpenVDB/LevelSetModels/buddha.vdb");
+        targetFile.open();
+        GridT::Ptr target = openvdb::gridPtrCast<GridT>(targetFile.getGrids()->at(0));
+
+        typedef openvdb::tools::LevelSetMorphing<GridT>  MorphT;
+        MorphT morph(*source, *target);
+        morph.setSpatialScheme(openvdb::math::FIRST_BIAS);
+        //morph.setSpatialScheme(openvdb::math::HJWENO5_BIAS);
+        morph.setTemporalScheme(openvdb::math::TVD_RK2);
+        morph.setTrackerSpatialScheme(openvdb::math::FIRST_BIAS);
+        //morph.setTrackerSpatialScheme(openvdb::math::HJWENO5_BIAS);
+        morph.setTrackerTemporalScheme(openvdb::math::TVD_RK2);
+
+        const std::string name("Bunny2Buddha");
+        FrameWriter<GridT> fw(1, source);
+        fw(name, 0.0f, 0);
+        for (float t = 0, dt = 1.0f; !source->empty() && t < 300.0f; t += dt) {
+        timer.start("Morphing");
+        const int cflCount = morph.advect(t, t + dt);
+        timer.stop();
+        fw(name, t + dt, cflCount);
+        }
+    }
+    */
+    /*
+    // Uncomment sections below to run this (very time-consuming) test
+    {//test morphing between the dragon and the teapot models loaded from files
+        unittest_util::CpuTimer timer;
+        openvdb::initialize();//required whenever I/O of OpenVDB files is performed!
+        openvdb::io::File sourceFile("/usr/pic1/Data/OpenVDB/LevelSetModels/dragon.vdb");
+        sourceFile.open();
+        GridT::Ptr source = openvdb::gridPtrCast<GridT>(sourceFile.getGrids()->at(0));
+
+        openvdb::io::File targetFile("/usr/pic1/Data/OpenVDB/LevelSetModels/utahteapot.vdb");
+        targetFile.open();
+        GridT::Ptr target = openvdb::gridPtrCast<GridT>(targetFile.getGrids()->at(0));
+
+        typedef openvdb::tools::LevelSetMorphing<GridT>  MorphT;
+        MorphT morph(*source, *target);
+        morph.setSpatialScheme(openvdb::math::FIRST_BIAS);
+        //morph.setSpatialScheme(openvdb::math::HJWENO5_BIAS);
+        morph.setTemporalScheme(openvdb::math::TVD_RK2);
+        //morph.setTrackerSpatialScheme(openvdb::math::HJWENO5_BIAS);
+        morph.setTrackerSpatialScheme(openvdb::math::FIRST_BIAS);
+        morph.setTrackerTemporalScheme(openvdb::math::TVD_RK2);
+
+        const std::string name("Dragon2Teapot");
+        FrameWriter<GridT> fw(5, source);
+        fw(name, 0.0f, 0);
+        for (float t = 0, dt = 0.4f; !source->empty() && t < 110.0f; t += dt) {
+            timer.start("Morphing");
+            const int cflCount = morph.advect(t, t + dt);
+            timer.stop();
+            fw(name, t + dt, cflCount);
+        }
+        }
+
+    */
+}//testLevelSetMorph
+
+////////////////////////////////////////
+
+void
+TestTools::testLevelSetMeasure()
+{
+    const double percentage = 0.1/100.0;//i.e. 0.1%
+    typedef openvdb::FloatGrid GridT;
+    const int dim = 256;
+    openvdb::Real a, v, c, area, volume, curv;
+
+    // First sphere
+    openvdb::Vec3f C(0.35f, 0.35f, 0.35f);
+    openvdb::Real r = 0.15, voxelSize = 1.0/(dim-1);
+    const openvdb::Real Pi = boost::math::constants::pi<openvdb::Real>();
+    GridT::Ptr sphere = openvdb::tools::createLevelSetSphere<GridT>(r, C, voxelSize);
+
+    typedef openvdb::tools::LevelSetMeasure<GridT>  MeasureT;
+    MeasureT m(*sphere);
+
+    /// Test area and volume of sphere in world units
+    m.measure(a, v);
+    area = 4*Pi*r*r;
+    volume = 4.0/3.0*Pi*r*r*r;
+    //std::cerr << "\nArea of sphere = " << area << "  " << a << std::endl;
+    //std::cerr << "\nVolume of sphere = " << volume << "  " << v << std::endl;
+    // Test accuracy of computed measures to within 0.1% of the exact measure.
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(area,   a, percentage*area);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(volume, v, percentage*volume);
+
+    // Test all measures of sphere in world units
+    m.measure(a, v, c);
+    area = 4*Pi*r*r;
+    volume = 4.0/3.0*Pi*r*r*r;
+    curv = 1.0/r;
+    //std::cerr << "\nArea of sphere = " << area << "  " << a << std::endl;
+    //std::cerr << "Volume of sphere = " << volume << "  " << v << std::endl;
+    //std::cerr << "Avg mean curvature of sphere = " << curv << "  " << c << std::endl;
+    // Test accuracy of computed measures to within 0.1% of the exact measure.
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(area,   a, percentage*area);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(volume, v, percentage*volume);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(curv,   c, percentage*curv);
+
+     // Test all measures of sphere in index units
+    m.measure(a, v, c, false);
+    r /= voxelSize;
+    area = 4*Pi*r*r;
+    volume = 4.0/3.0*Pi*r*r*r;
+    curv = 1.0/r;
+    //std::cerr << "\nArea of sphere = " << area << "  " << a << std::endl;
+    //std::cerr << "Volume of sphere = " << volume << "  " << v << std::endl;
+    //std::cerr << "Avg mean curvature of sphere = " << curv << "  " << c << std::endl;
+    // Test accuracy of computed measures to within 0.1% of the exact measure.
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(area,   a, percentage*area);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(volume, v, percentage*volume);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(curv,   c, percentage*curv);
+
+    // Second sphere
+    C = openvdb::Vec3f(5.4f, 6.4f, 8.4f);
+    r = 0.57f;
+    sphere = openvdb::tools::createLevelSetSphere<GridT>(r, C, voxelSize);
+    m.reinit(*sphere);
+
+     // Test all measures of sphere in world units
+    m.measure(a, v, c);
+    area = 4*Pi*r*r;
+    volume = 4.0/3.0*Pi*r*r*r;
+    curv = 1.0/r;
+    //std::cerr << "\nArea of sphere = " << area << "  " << a << std::endl;
+    //std::cerr << "Volume of sphere = " << volume << "  " << v << std::endl;
+    //std::cerr << "Avg mean curvature of sphere = " << curv << "  " << c << std::endl;
+    // Test accuracy of computed measures to within 0.1% of the exact measure.
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(area,   a, percentage*area);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(volume, v, percentage*volume);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(curv,   c, percentage*curv);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(area,  openvdb::tools::levelSetArea(*sphere),  percentage*area);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(volume,openvdb::tools::levelSetVolume(*sphere),percentage*volume);
+
+     // Test all measures of sphere in index units
+    m.measure(a, v, c, false);
+    r /= voxelSize;
+    area = 4*Pi*r*r;
+    volume = 4.0/3.0*Pi*r*r*r;
+    curv = 1.0/r;
+    //std::cerr << "\nArea of sphere = " << area << "  " << a << std::endl;
+    //std::cerr << "Volume of sphere = " << volume << "  " << v << std::endl;
+    //std::cerr << "Avg mean curvature of sphere = " << curv << "  " << c << std::endl;
+    // Test accuracy of computed measures to within 0.1% of the exact measure.
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(area,   a, percentage*area);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(volume, v, percentage*volume);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(curv,   c, percentage*curv);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(area,  openvdb::tools::levelSetArea(*sphere,false),
+                                 percentage*area);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(volume,openvdb::tools::levelSetVolume(*sphere,false),
+                                 percentage*volume);
+
+    // Read level set from file
+    /*
+    unittest_util::CpuTimer timer;
+    openvdb::initialize();//required whenever I/O of OpenVDB files is performed!
+    openvdb::io::File sourceFile("/usr/pic1/Data/OpenVDB/LevelSetModels/venusstatue.vdb");
+    sourceFile.open();
+    GridT::Ptr model = openvdb::gridPtrCast<GridT>(sourceFile.getGrids()->at(0));
+    m.reinit(*model);
+
+    //m.setGrainSize(1);
+    timer.start("\nParallel measure of area and volume");
+    m.measure(a, v, false);
+    timer.stop();
+    std::cerr << "Model: area = " << a << ", volume = " << v << std::endl;
+
+    timer.start("\nParallel measure of area, volume and curvature");
+    m.measure(a, v, c, false);
+    timer.stop();
+    std::cerr << "Model: area = " << a << ", volume = " << v
+              << ", average curvature = " << c << std::endl;
+
+    m.setGrainSize(0);
+    timer.start("\nSerial measure of area and volume");
+    m.measure(a, v, false);
+    timer.stop();
+    std::cerr << "Model: area = " << a << ", volume = " << v << std::endl;
+
+    timer.start("\nSerial measure of area, volume and curvature");
+    m.measure(a, v, c, false);
+    timer.stop();
+    std::cerr << "Model: area = " << a << ", volume = " << v
+              << ", average curvature = " << c << std::endl;
+    */
+}//testLevelSetMeasure
 
 void
 TestTools::testMagnitude()
@@ -713,6 +1036,51 @@ TestTools::testMagnitude()
     xyz.reset(35,10,40);
     v = accessor.getValue(xyz);
     CPPUNIT_ASSERT_DOUBLES_EQUAL(1.0, v, 0.01);
+}
+
+
+void
+TestTools::testMaskedMagnitude()
+{
+    openvdb::FloatGrid::Ptr grid = openvdb::FloatGrid::create(/*background=*/5.0);
+    openvdb::FloatTree& tree = grid->tree();
+    CPPUNIT_ASSERT(tree.empty());
+
+    const openvdb::Coord dim(64,64,64);
+    const openvdb::Vec3f center(35.0f, 30.0f, 40.0f);
+    const float radius=0.0f;
+    unittest_util::makeSphere<openvdb::FloatGrid>(dim,center,radius,*grid,
+                                                  unittest_util::SPHERE_DENSE);
+
+    CPPUNIT_ASSERT(!tree.empty());
+    CPPUNIT_ASSERT_EQUAL(dim[0]*dim[1]*dim[2], int(tree.activeVoxelCount()));
+
+    openvdb::VectorGrid::Ptr gradGrid = openvdb::tools::gradient(*grid);
+    CPPUNIT_ASSERT_EQUAL(int(tree.activeVoxelCount()), int(gradGrid->activeVoxelCount()));
+
+
+    // create a masking grid
+
+    const openvdb::CoordBBox maskbbox(openvdb::Coord(35, 30, 30), openvdb::Coord(41, 41, 41));
+    openvdb::BoolGrid::Ptr maskGrid = openvdb::BoolGrid::create(false);
+    maskGrid->fill(maskbbox, true/*value*/, true/*activate*/);
+
+    // compute the magnitude in masked region
+    openvdb::FloatGrid::Ptr mag = openvdb::tools::magnitude(*gradGrid, *maskGrid);
+
+    openvdb::FloatGrid::ConstAccessor accessor = mag->getConstAccessor();
+
+    // test in the masked region
+    openvdb::Coord xyz(35,30,30);
+    CPPUNIT_ASSERT(maskbbox.isInside(xyz));
+    float v = accessor.getValue(xyz);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(1.0, v, 0.01);
+
+    // test outside the masked region
+    xyz.reset(35,10,40);
+    CPPUNIT_ASSERT(!maskbbox.isInside(xyz));
+    v = accessor.getValue(xyz);
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(0.0, v, 0.01);
 }
 
 
@@ -758,6 +1126,63 @@ TestTools::testNormalize()
     CPPUNIT_ASSERT_DOUBLES_EQUAL(1.0, v.length(), 0.0001);
 }
 
+
+void
+TestTools::testMaskedNormalize()
+{
+    openvdb::FloatGrid::Ptr grid = openvdb::FloatGrid::create(5.0);
+    openvdb::FloatTree& tree = grid->tree();
+
+    const openvdb::Coord dim(64,64,64);
+    const openvdb::Vec3f center(35.0f, 30.0f, 40.0f);
+    const float radius=10.0f;
+    unittest_util::makeSphere<openvdb::FloatGrid>(
+        dim,center,radius,*grid, unittest_util::SPHERE_DENSE);
+
+    CPPUNIT_ASSERT_EQUAL(dim[0]*dim[1]*dim[2], int(tree.activeVoxelCount()));
+    openvdb::Coord xyz(10, 20, 30);
+
+    openvdb::VectorGrid::Ptr grad = openvdb::tools::gradient(*grid);
+
+    typedef openvdb::VectorGrid::ValueType Vec3Type;
+
+    typedef openvdb::VectorGrid::ValueOnIter ValueIter;
+
+    struct Local {
+        static inline Vec3Type op(const Vec3Type &x) { return x * 2.0f; }
+        static inline void visit(const ValueIter& it) { it.setValue(op(*it)); }
+    };
+
+    openvdb::tools::foreach(grad->beginValueOn(), Local::visit, true);
+
+    openvdb::VectorGrid::ConstAccessor accessor = grad->getConstAccessor();
+
+    xyz = openvdb::Coord(35,10,40);
+    Vec3Type v = accessor.getValue(xyz);
+
+    // create a masking grid
+
+    const openvdb::CoordBBox maskbbox(openvdb::Coord(35, 30, 30), openvdb::Coord(41, 41, 41));
+    openvdb::BoolGrid::Ptr maskGrid = openvdb::BoolGrid::create(false);
+    maskGrid->fill(maskbbox, true/*value*/, true/*activate*/);
+
+    CPPUNIT_ASSERT_DOUBLES_EQUAL(2.0,v.length(),0.001);
+
+    // compute the normalized valued in the masked region
+    openvdb::VectorGrid::Ptr norm = openvdb::tools::normalize(*grad, *maskGrid);
+
+    accessor = norm->getConstAccessor();
+    { // outside the masked region
+        CPPUNIT_ASSERT(!maskbbox.isInside(xyz));
+        v = accessor.getValue(xyz);
+        CPPUNIT_ASSERT_DOUBLES_EQUAL(0.0, v.length(), 0.0001);
+    }
+    { // inside the masked region
+        xyz.reset(35, 30, 30);
+        v = accessor.getValue(xyz);
+        CPPUNIT_ASSERT_DOUBLES_EQUAL(1.0, v.length(), 0.0001);
+    }
+}
 
 ////////////////////////////////////////
 
@@ -903,9 +1328,9 @@ TestTools::testPointAdvect()
 
 struct PointList
 {
-    struct Point { float x,y,z; };
+    struct Point { double x,y,z; };
     std::vector<Point> list;
-    void add(const openvdb::Vec3R &p) { Point q={p[0],p[1],p[2]}; list.push_back(q); }
+    void add(const openvdb::Vec3d &p) { Point q={p[0],p[1],p[2]}; list.push_back(q); }
 };
 
 
@@ -1002,9 +1427,9 @@ namespace {
 
 template<typename IterT>
 struct MatMul {
-    openvdb::math::Mat3s M;
-    MatMul(const openvdb::math::Mat3s& M): M(M) {}
-    openvdb::Vec3s xform(const openvdb::Vec3s& v) const { return M.transform(v); }
+    openvdb::math::Mat3s mat;
+    MatMul(const openvdb::math::Mat3s& _mat): mat(_mat) {}
+    openvdb::Vec3s xform(const openvdb::Vec3s& v) const { return mat.transform(v); }
     void operator()(const IterT& it) const { it.setValue(xform(*it)); }
 };
 
@@ -1233,6 +1658,92 @@ TestTools::testUtil()
 
     tree = openvdb::util::leafTopologyIntersection(treeA, treeB);
     CPPUNIT_ASSERT(tree->activeVoxelCount() == voxelCountA);
+}
+
+
+////////////////////////////////////////
+
+
+void
+TestTools::testVectorTransformer()
+{
+    using namespace openvdb;
+
+    Mat4d xform = Mat4d::identity();
+    xform.preTranslate(Vec3d(0.1, -2.5, 3));
+    xform.preScale(Vec3d(0.5, 1.1, 2));
+    xform.preRotate(math::X_AXIS, 30.0 * M_PI / 180.0);
+    xform.preRotate(math::Y_AXIS, 300.0 * M_PI / 180.0);
+
+    Mat4d invXform = xform.inverse();
+    invXform = invXform.transpose();
+
+    {
+        // Set some vector values in a grid, then verify that tools::transformVectors()
+        // transforms them as expected for each VecType.
+
+        const Vec3s refVec0(0, 0, 0), refVec1(1, 0, 0), refVec2(0, 1, 0), refVec3(0, 0, 1);
+
+        Vec3SGrid grid;
+        Vec3SGrid::Accessor acc = grid.getAccessor();
+
+#define resetGrid() \
+    { \
+        grid.clear(); \
+        acc.setValue(Coord(0), refVec0); \
+        acc.setValue(Coord(1), refVec1); \
+        acc.setValue(Coord(2), refVec2); \
+        acc.setValue(Coord(3), refVec3); \
+    }
+
+        resetGrid();
+        grid.setVectorType(VEC_INVARIANT);
+        tools::transformVectors(grid, xform);
+        CPPUNIT_ASSERT(acc.getValue(Coord(0)).eq(refVec0));
+        CPPUNIT_ASSERT(acc.getValue(Coord(1)).eq(refVec1));
+        CPPUNIT_ASSERT(acc.getValue(Coord(2)).eq(refVec2));
+        CPPUNIT_ASSERT(acc.getValue(Coord(3)).eq(refVec3));
+
+        resetGrid();
+        grid.setVectorType(VEC_COVARIANT);
+        tools::transformVectors(grid, xform);
+        CPPUNIT_ASSERT(acc.getValue(Coord(0)).eq(invXform.transform3x3(refVec0)));
+        CPPUNIT_ASSERT(acc.getValue(Coord(1)).eq(invXform.transform3x3(refVec1)));
+        CPPUNIT_ASSERT(acc.getValue(Coord(2)).eq(invXform.transform3x3(refVec2)));
+        CPPUNIT_ASSERT(acc.getValue(Coord(3)).eq(invXform.transform3x3(refVec3)));
+
+        resetGrid();
+        grid.setVectorType(VEC_COVARIANT_NORMALIZE);
+        tools::transformVectors(grid, xform);
+        CPPUNIT_ASSERT_EQUAL(refVec0, acc.getValue(Coord(0)));
+        CPPUNIT_ASSERT(acc.getValue(Coord(1)).eq(invXform.transform3x3(refVec1).unit()));
+        CPPUNIT_ASSERT(acc.getValue(Coord(2)).eq(invXform.transform3x3(refVec2).unit()));
+        CPPUNIT_ASSERT(acc.getValue(Coord(3)).eq(invXform.transform3x3(refVec3).unit()));
+
+        resetGrid();
+        grid.setVectorType(VEC_CONTRAVARIANT_RELATIVE);
+        tools::transformVectors(grid, xform);
+        CPPUNIT_ASSERT(acc.getValue(Coord(0)).eq(xform.transform3x3(refVec0)));
+        CPPUNIT_ASSERT(acc.getValue(Coord(1)).eq(xform.transform3x3(refVec1)));
+        CPPUNIT_ASSERT(acc.getValue(Coord(2)).eq(xform.transform3x3(refVec2)));
+        CPPUNIT_ASSERT(acc.getValue(Coord(3)).eq(xform.transform3x3(refVec3)));
+
+        resetGrid();
+        grid.setVectorType(VEC_CONTRAVARIANT_ABSOLUTE);
+        /// @todo This doesn't really test the behavior w.r.t. homogeneous coords.
+        tools::transformVectors(grid, xform);
+        CPPUNIT_ASSERT(acc.getValue(Coord(0)).eq(xform.transformH(refVec0)));
+        CPPUNIT_ASSERT(acc.getValue(Coord(1)).eq(xform.transformH(refVec1)));
+        CPPUNIT_ASSERT(acc.getValue(Coord(2)).eq(xform.transformH(refVec2)));
+        CPPUNIT_ASSERT(acc.getValue(Coord(3)).eq(xform.transformH(refVec3)));
+
+#undef resetGrid
+    }
+    {
+        // Verify that transformVectors() operates only on vector-valued grids.
+        FloatGrid scalarGrid;
+        CPPUNIT_ASSERT_THROW(tools::transformVectors(scalarGrid, xform), TypeError);
+    }
 }
 
 // Copyright (c) 2012-2013 DreamWorks Animation LLC
