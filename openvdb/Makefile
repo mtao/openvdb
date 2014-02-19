@@ -126,20 +126,20 @@ GLFW_LIB := -lglfw
 
 # The version of Python for which to build the OpenVDB module
 # (leave blank if Python is unavailable)
-PYTHON_VERSION := 2.6
+PYTHON_VERSION := 2.7
 # The directory containing Python.h
-PYTHON_INCL_DIR := $(HFS)/python/include/python$(PYTHON_VERSION)
+PYTHON_INCL_DIR := /usr/include/python$(PYTHON_VERSION)
 # The directory containing pyconfig.h
 PYCONFIG_INCL_DIR := $(PYTHON_INCL_DIR)
 # The directory containing libpython
-PYTHON_LIB_DIR := $(HFS)/python/lib
+PYTHON_LIB_DIR := /usr/lib
 PYTHON_LIB := -lpython$(PYTHON_VERSION)
 # The directory containing libboost_python
-BOOST_PYTHON_LIB_DIR := /rel/depot/third_party_build/boost/rhel6-1.46.1-0/lib
+BOOST_PYTHON_LIB_DIR := 
 BOOST_PYTHON_LIB := -lboost_python-gcc41-mt-python26-1_46_1
 # The directory containing arrayobject.h
 # (leave blank if NumPy is unavailable)
-NUMPY_INCL_DIR := /rel/map/generic-2013.22/include
+NUMPY_INCL_DIR := /usr/lib64/python2.7/site-packages/numpy/core/include
 # The Epydoc executable
 # (leave blank if Epydoc is unavailable)
 EPYDOC := epydoc
