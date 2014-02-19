@@ -103,7 +103,7 @@ CPPUNIT_LIB := -lcppunit
 GLFW_INCL_DIR := /usr/local/include
 # The directory containing libglfw
 GLFW_LIB_DIR := /usr/local/lib
-GLFW_LIB := -lglfw
+GLFW_LIB := -lglfw2
 
 # The Doxygen executable
 # (leave blank if Doxygen is unavailable)
