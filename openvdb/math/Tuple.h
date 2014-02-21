@@ -222,6 +222,11 @@ std::ostream& operator<<(std::ostream& ostr, const Tuple<SIZE, T>& classname)
     return ostr;
 }
 
+template <int SIZE, typename T>
+struct ScalarType<Tuple<SIZE,T> > {
+    typedef typename ScalarType<T>::type type;
+};
+
 } // namespace math
 } // namespace OPENVDB_VERSION_NAME
 } // namespace openvdb

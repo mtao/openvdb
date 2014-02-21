@@ -831,6 +831,11 @@ MaxIndex(const Vec3T& v)
     return hashTable[hashKey];
 }
 
+template <typename T>
+struct ScalarType {
+    typedef T type;
+};
+
 } // namespace math
 } // namespace OPENVDB_VERSION_NAME
 } // namespace openvdb

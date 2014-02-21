@@ -237,7 +237,7 @@ public:
     typedef BaseStencil<GridType, SevenPointStencil<GridType> > BaseType;
     typedef typename BaseType::BufferType   BufferType;
     typedef typename GridType::ValueType    ValueType;
-    typedef math::Vec3<ValueType>           Vec3Type;
+    typedef math::Vec3<typename ScalarType<ValueType>::type >           Vec3Type;
     static const int SIZE = 7;
 
     SevenPointStencil(const GridType& grid): BaseType(grid, SIZE) {}
@@ -289,7 +289,8 @@ public:
     typedef BaseStencil<GridType, BoxStencil<GridType> > BaseType;
     typedef typename BaseType::BufferType   BufferType;
     typedef typename GridType::ValueType    ValueType;
-    typedef math::Vec3<ValueType>           Vec3Type;
+    typedef math::Vec3<typename ScalarType<ValueType>::type >           Vec3Type;
+    typedef math::Vec3<ValueType>           GradType;
     static const int SIZE = 8;
 
     BoxStencil(const GridType& grid): BaseType(grid, SIZE) {}
@@ -347,7 +348,7 @@ public:
     /// @note Computed as partial derivatives of the trilinear interpolation kernel:
     ///       v000 (1-u)(1-v)(1-w) + v001 (1-u)(1-v)w + v010 (1-u)v(1-w) + v011 (1-u)vw
     ///     + v100 u(1-v)(1-w)     + v101 u(1-v)w     + v110 uv(1-w)     + v111 uvw
-    inline Vec3Type gradient(const Vec3Type& xyz) const
+    inline GradType gradient(const Vec3Type& xyz) const
     {
         const Real u = xyz[0] - BaseType::mCenter[0]; assert(u>=0 && u<=1);
         const Real v = xyz[1] - BaseType::mCenter[1]; assert(v>=0 && v<=1);
@@ -361,7 +362,7 @@ public:
         // Z component
         ValueType A = D[0] + (D[1]- D[0]) * v;
         ValueType B = D[2] + (D[3]- D[2]) * v;
-        Vec3Type grad(zeroVal<ValueType>(), zeroVal<ValueType>(), A + (B - A) * u);
+        GradType grad(zeroVal<ValueType>(), zeroVal<ValueType>(), A + (B - A) * u);
 
         D[0] = BaseType::template getValue<0,0,0>() + D[0] * w;
         D[1] = BaseType::template getValue<0,1,0>() + D[1] * w;
@@ -444,7 +445,7 @@ public:
     typedef BaseStencil<GridType,SecondOrderDenseStencil<GridType> > BaseType;
     typedef typename BaseType::BufferType   BufferType;
     typedef typename GridType::ValueType    ValueType;
-    typedef math::Vec3<ValueType>           Vec3Type;
+    typedef math::Vec3<typename ScalarType<ValueType>::type >           Vec3Type;
 
     static const int SIZE = 19;
 
@@ -522,7 +523,7 @@ public:
     typedef BaseStencil<GridType, ThirteenPointStencil<GridType> > BaseType;
     typedef typename BaseType::BufferType   BufferType;
     typedef typename GridType::ValueType    ValueType;
-    typedef math::Vec3<ValueType>           Vec3Type;
+    typedef math::Vec3<typename ScalarType<ValueType>::type >           Vec3Type;
 
     static const int SIZE = 13;
 
@@ -651,7 +652,7 @@ public:
     typedef BaseStencil<GridType, FourthOrderDenseStencil<GridType> > BaseType;
     typedef typename BaseType::BufferType   BufferType;
     typedef typename GridType::ValueType    ValueType;
-    typedef math::Vec3<ValueType>           Vec3Type;
+    typedef math::Vec3<typename ScalarType<ValueType>::type >           Vec3Type;
 
     static const int SIZE = 61;
 
@@ -788,7 +789,7 @@ public:
     typedef BaseStencil<GridType, NineteenPointStencil<GridType> > BaseType;
     typedef typename BaseType::BufferType   BufferType;
     typedef typename GridType::ValueType    ValueType;
-    typedef math::Vec3<ValueType>           Vec3Type;
+    typedef math::Vec3<typename ScalarType<ValueType>::type >           Vec3Type;
 
     static const int SIZE = 19;
 
@@ -1002,7 +1003,7 @@ public:
     typedef BaseStencil<GridType, SixthOrderDenseStencil<GridType> > BaseType;
     typedef typename BaseType::BufferType   BufferType;
     typedef typename GridType::ValueType    ValueType;
-    typedef math::Vec3<ValueType>           Vec3Type;
+    typedef math::Vec3<typename ScalarType<ValueType>::type >           Vec3Type;
 
     static const int SIZE = 127;
 
@@ -1183,7 +1184,8 @@ public:
     typedef BaseStencil<GridType, GradStencil<GridType> > BaseType;
     typedef typename BaseType::BufferType                 BufferType;
     typedef typename GridType::ValueType                  ValueType;
-    typedef math::Vec3<ValueType>                         Vec3Type;
+    typedef math::Vec3<typename ScalarType<ValueType>::type >           Vec3Type;
+    typedef math::Vec3<ValueType>           GradType;
 
     static const int SIZE = 7;
 
@@ -1222,9 +1224,9 @@ public:
     ///
     /// @note This method should not be called until the stencil
     /// buffer has been populated via a call to moveTo(ijk).
-    inline Vec3Type gradient() const
+    inline GradType gradient() const
     {
-        return Vec3Type(mStencil[2] - mStencil[1],
+        return GradType(mStencil[2] - mStencil[1],
                         mStencil[4] - mStencil[3],
                         mStencil[6] - mStencil[5])*mInv2Dx;
     }
@@ -1232,9 +1234,9 @@ public:
     ///
     /// @note This method should not be called until the stencil
     /// buffer has been populated via a call to moveTo(ijk).
-    inline Vec3Type gradient(const Vec3Type& V) const
+    inline GradType gradient(const Vec3Type& V) const
     {
-        return Vec3Type(V[0]>0 ? mStencil[0] - mStencil[1] : mStencil[2] - mStencil[0],
+        return GradType(V[0]>0 ? mStencil[0] - mStencil[1] : mStencil[2] - mStencil[0],
                         V[1]>0 ? mStencil[0] - mStencil[3] : mStencil[4] - mStencil[0],
                         V[2]>0 ? mStencil[0] - mStencil[5] : mStencil[6] - mStencil[0])*2*mInv2Dx;
     }
@@ -1309,7 +1311,8 @@ public:
     typedef BaseStencil<GridType, WenoStencil<GridType> > BaseType;
     typedef typename BaseType::BufferType                 BufferType;
     typedef typename GridType::ValueType                  ValueType;
-    typedef math::Vec3<ValueType>                         Vec3Type;
+    typedef math::Vec3<typename ScalarType<ValueType>::type >           Vec3Type;
+    typedef math::Vec3<ValueType>           GradType;
 
     static const int SIZE = 19;
 
@@ -1367,10 +1370,10 @@ public:
     ///
     /// @note This method should not be called until the stencil
     /// buffer has been populated via a call to moveTo(ijk).
-    inline Vec3Type gradient(const Vec3Type& V) const
+    inline GradType gradient(const Vec3Type& V) const
     {
         const BufferType& v = mStencil;
-        return 2*mInv2Dx * Vec3Type(
+        return 2*mInv2Dx * GradType(
             V[0]>0 ? math::WENO5(v[ 2]-v[ 1],v[ 3]-v[ 2],v[ 0]-v[ 3], v[ 4]-v[ 0],v[ 5]-v[ 4],mDx2)
                 : math::WENO5(v[ 6]-v[ 5],v[ 5]-v[ 4],v[ 4]-v[ 0], v[ 0]-v[ 3],v[ 3]-v[ 2],mDx2),
             V[1]>0 ? math::WENO5(v[ 8]-v[ 7],v[ 9]-v[ 8],v[ 0]-v[ 9], v[10]-v[ 0],v[11]-v[10],mDx2)
@@ -1383,9 +1386,9 @@ public:
     ///
     /// @note This method should not be called until the stencil
     /// buffer has been populated via a call to moveTo(ijk).
-    inline Vec3Type gradient() const
+    inline GradType gradient() const
     {
-        return mInv2Dx * Vec3Type(
+        return mInv2Dx * GradType(
             mStencil[ 4] - mStencil[ 3],
             mStencil[10] - mStencil[ 9],
             mStencil[16] - mStencil[15]);
